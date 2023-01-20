@@ -1,0 +1,19 @@
+build:ci --loading_phase_threads=1
+build:ci --jobs=2
+build:ci --verbose_failures
+common:ci --color=no
+test:ci --test_output=errors
+build:ci-windows --crosstool_top=@rules_haskell_ghc_windows_amd64//:cc_toolchain
+
+# This project uses a GHC provisioned via nix.
+# We need to use the rules_haskell nix toolchain accordingly:
+build --host_platform=@io_tweag_rules_nixpkgs//nixpkgs/platforms:host
+run --host_platform=@io_tweag_rules_nixpkgs//nixpkgs/platforms:host
+
+# test environment does not propagate locales by default
+# some tests reads files written in UTF8, we need to propagate the correct
+# environment variables, such as LOCALE_ARCHIVE
+# We also need to setup an utf8 locale
+test --test_env=LANG=en_US.utf8 --test_env=LOCALE_ARCHIVE
+
+try-import .bazelrc.local
