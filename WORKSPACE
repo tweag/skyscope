@@ -36,7 +36,17 @@ load(
 stack_snapshot(
     name = "stackage",
     extra_deps = {"zlib": ["@zlib.dev//:zlib"]},
-    packages = ["zlib"],
+    packages = [
+        "aeson",
+        "bytestring",
+        "cryptohash-sha256",
+        "direct-sqlite",
+        "stm",
+        "text",
+        "time",
+        "unix",
+        "zlib",
+    ],
 
     # LTS snapshot published for ghc-8.10.7 (default version used by rules_haskell)
     snapshot = "lts-18.18",
