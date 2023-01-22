@@ -38,7 +38,9 @@ stack_snapshot(
     extra_deps = {"zlib": ["@zlib.dev//:zlib"]},
     packages = [
         "aeson",
+        "attoparsec",
         "bytestring",
+        "containers",
         "cryptohash-sha256",
         "direct-sqlite",
         "stm",

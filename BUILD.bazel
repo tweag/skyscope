@@ -35,7 +35,9 @@ haskell_binary(
     deps = [
         ":base",
         "@stackage//:aeson",
+        "@stackage//:attoparsec",
         "@stackage//:bytestring",
+        "@stackage//:containers",
         "@stackage//:cryptohash-sha256",
         "@stackage//:direct-sqlite",
         "@stackage//:stm",
