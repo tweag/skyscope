@@ -33,12 +33,10 @@ import GHC.Stack (HasCallStack)
 import Prelude
 import System.Environment (lookupEnv)
 
-withDatabase :: FilePath -> (Database -> IO () -> IO ()) -> IO ()
+withDatabase :: FilePath -> (Database -> IO ()) -> IO ()
 withDatabase path application =
   let open = SQLite3.open $ Text.pack path
-  in bracket open SQLite3.close $ \database -> do
-    application database $ do
-      SQLite3.interrupt database
+  in bracket open SQLite3.close application
 
 withStatement :: Database -> Text -> (Statement -> IO a) -> IO a
 withStatement database sql action =
@@ -84,11 +82,11 @@ executeSqlScalar database sql params = do
 executeStatements :: Database -> [[Text]] -> IO ()
 executeStatements database statements = for_ statements $ flip (executeSql database) []
 
-batchInsert :: Database -> Text -> [Text] -> Text -> [[SQLData]] -> IO ()
+batchInsert :: Database -> Text -> [Text] -> [[SQLData]] -> IO ()
 batchInsert = batchInsertInternal 999 -- 32766
 
-batchInsertInternal :: Int -> Database -> Text -> [Text] -> Text -> [[SQLData]] -> IO ()
-batchInsertInternal varLimit database table columns extraSql rows = do
+batchInsertInternal :: Int -> Database -> Text -> [Text] -> [[SQLData]] -> IO ()
+batchInsertInternal varLimit database table columns rows = do
   let columnCount = length columns
   let rowCount = length rows
   let batchSize = varLimit `div` columnCount
@@ -96,9 +94,7 @@ batchInsertInternal varLimit database table columns extraSql rows = do
   let commaSep n = Text.intercalate ", " . replicate n
   let withInsertRows n f = flip (withStatement database) f $ Text.unlines
         [ "INSERT INTO " <> table <> "(" <> Text.intercalate ", " columns <> ")"
-        , "VALUES " <> n `commaSep` ("(" <> columnCount `commaSep` "?"  <> ")")
-        , extraSql
-        ]
+        , "VALUES " <> n `commaSep` ("(" <> columnCount `commaSep` "?"  <> ")") ]
   let split :: [a] -> ([[a]], [a])
       split xs = case splitAt batchSize xs of
         (ys, zs)
