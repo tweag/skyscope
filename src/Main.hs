@@ -130,19 +130,22 @@ graphParser = do
 
 server :: Sqlite.Database -> IO ()
 server db = do
-  Web.scotty 12345 $ do
-    Web.get "/" $ Web.html $ LazyText.fromStrict $ Text.unlines
-      [ "<html>"
-      , "  <head>"
-      , "    <title>Skyscope</title>"
-      , "    <meta charset=\"UTF-8\">"
-      , "    <script>"
-      , Text.decodeUtf8 $(embedFile "src/main.js")
-      , "    </script>"
-      , "  </head>"
-      , "  <body></body>"
-      , "</html>"
-      ]
+  Web.scotty 28581 $ do
+    Web.get "/" $ do
+      mainJs <- liftIO $ Text.readFile "/home/ben/git/skyscope/src/main.js"
+      Web.html $ LazyText.fromStrict $ Text.unlines
+        [ "<html>"
+        , "  <head>"
+        , "    <title>Skyscope</title>"
+        , "    <meta charset=\"UTF-8\">"
+        , "    <script>"
+        --, Text.decodeUtf8 $(embedFile "src/main.js")
+        , mainJs
+        , "    </script>"
+        , "  </head>"
+        , "  <body></body>"
+        , "</html>"
+        ]
     Web.post "/find" $ Json.eitherDecode <$> Web.body >>= \case
       Right pattern -> Web.json =<< liftIO (findNodes db 100 pattern)
       Left err -> badRequest err
