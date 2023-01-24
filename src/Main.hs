@@ -10,7 +10,6 @@
 
 module Main where
 
-import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (FromJSON, ToJSON, ToJSONKey)
@@ -24,12 +23,10 @@ import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Coerce (coerce)
 import Data.FileEmbed (embedFile)
-import Data.Foldable (for_)
 import Data.Functor ((<&>))
 import Data.Int (Int64)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromJust)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -44,7 +41,6 @@ import Network.HTTP.Types.Status (badRequest400)
 import Prelude
 import qualified Sqlite
 import System.Exit (ExitCode(..))
-import System.IO (IOMode(..), withFile)
 import System.Posix.Temp (mkdtemp)
 import System.Process.Text (readProcessWithExitCode)
 import qualified Web.Scotty as Web
@@ -187,22 +183,3 @@ renderSvg db hashes = do
   readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
     (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
     (ExitSuccess, svg, _) -> LazyText.fromStrict svg
-
-
-
-writeGraphVizExample :: Graph -> IO ()
-writeGraphVizExample (nodes, edges) = do
-  putStrLn $ "node count = " <> show (Map.size nodes) <> ", edge count = " <> show (Set.size edges)
-  putStrLn $ "unique sources = " <> show (Set.size $ Set.map edgeSource $ edges)
-  putStrLn $ "unique targets = " <> show (Set.size $ Set.map edgeTarget $ edges)
-  withFile "/tmp/skyscope.dot" WriteMode $ \handle -> do
-    let writeLine = Text.hPutStrLn handle
-        contains str nodeData = not $ null $ Text.breakOnAll str nodeData
-    writeLine "digraph {"
-    for_ (Map.assocs nodes) $ \(NodeHash hash, Node nodeType nodeData) ->
-      when (contains "cpp:toolchain" nodeData) $ writeLine $ "    node_" <> hash <> " [label=\"" <> nodeType <> "\",tooltip=\"" <> Text.take 256 nodeData <> "\"];"
-    for_ (Set.toList edges) $ \(Edge (NodeHash source) (NodeHash target)) ->
-      when (all (contains "cpp:toolchain" . nodeData . fromJust . flip Map.lookup nodes) [ NodeHash source, NodeHash target ]) $ writeLine $ "    node_" <> source <> " -> node_" <> target <> ";"
-    writeLine "}"
-
--- $> fmap (Data.Bifunctor.bimap (map Main.nodeType . Data.Map.elems) Data.Set.toList) $ Data.Attoparsec.Text.parseOnly Main.graphParser $ Text.pack "Warning:\n\nGLOB:<GlobDescriptor packageName=@stackage// packageRoot=/home/ben/.cache/bazel/_bazel_ben/b9e44cbefb573eab6fcf0cf1e5b6269e/external/stackage subdir=base-compat-0.11.2/src/Data/Bitraversable pattern=** globberOperation=FILES>|IGNORED_PACKAGE_PREFIXES:@stackage|PACKAGE_LOOKUP:@stackage//base-compat-0.11.2/src/Data/Bitraversable|DIRECTORY_LISTING:[/home/ben/.cache/bazel/_bazel_ben/b9e44cbefb573eab6fcf0cf1e5b6269e/external/stackage]/[base-compat-0.11.2/src/Data/Bitraversable]|GLOB:<GlobDescriptor packageName=@stackage// packageRoot=/home/ben/.cache/bazel/_bazel_ben/b9e44cbefb573eab6fcf0cf1e5b6269e/external/stackage subdir=base-compat-0.11.2/src/Data/Bitraversable/Compat pattern=** globberOperation=FILES>\nFILE:[/home/ben/.cache/bazel/_bazel_ben/b9e44cbefb573eab6fcf0cf1e5b6269e/external/com_google_protobuf]/[csharp/src/Google.Protobuf/WellKnownTypes/BUILD]|FILE:[/home/ben/.cache/bazel/_bazel_ben/b9e44cbefb573eab6fcf0cf1e5b6269e/external/com_google_protobuf]/[csharp/src/Google.Protobuf/WellKnownTypes]|FILE_STATE:[/home/ben/.cache/bazel/_bazel_ben/b9e44cbefb573eab6fcf0cf1e5b6269e/external/com_google_protobuf]/[csharp/src/Google.Protobuf/WellKnownTypes/BUILD]\n\n"

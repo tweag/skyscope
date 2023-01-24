@@ -26,14 +26,83 @@ function createViewport() {
     return svg;
 }
 
+function setStyle(element, style) {
+    element.setAttribute("style", Object.entries(style)
+        .map(entry => entry[0] + ":" + entry[1]).join(";")
+    );
+}
+
+function createElement(name, style = {}, parent) {
+    const element = document.createElement(name);
+    setStyle(element, style)
+    if (parent !== undefined) {
+        parent.appendChild(element);
+    }
+    return element
+}
+
+function createSearchInterface() {
+    const overlay = createElement("div");
+    const setOverlayStyle = function(height) {
+        setStyle(overlay, {
+            "display": "flex",
+            "position": "fixed",
+            "width": "100%",
+            "height": height,
+            "left": "0",
+            "top": "0",
+        });
+    }
+    const container = createElement("div", {}, overlay);
+    const setContainerStyle = function(margin) {
+        setStyle(container, {
+            "background-color": "#ccd7db",
+            "border-radius": "20px",
+            "opacity": "95%",
+            "margin": margin,
+            "padding": "30px",
+            "flex-grow": 1,
+        });
+    }
+    const searchBox = createElement("div", {
+        "align-items": "center",
+        "display": "flex",
+    }, container);
+    const patternInput = createElement("input", {
+        "flex-grow": 1,
+        "font-size": "28px",
+        "padding": "5px 10px",
+        "border-radius": "5px",
+    }, searchBox);
+    const nodeCount = createElement("span", {
+        "font-size": "28px",
+        "font-style": "italic",
+        "padding-left": "20px",
+        "color": "#4f4f4f",
+    }, searchBox);
+    nodeCount.appendChild(document.createTextNode((61303).toLocaleString() + " nodes"))
+    function expandSearch() {
+        setOverlayStyle("100%");
+        setContainerStyle("30px 100px");
+    }
+    function collapseSearch() {
+        setOverlayStyle("auto");
+        setContainerStyle("30px 100px 0px");
+        patternInput.blur();
+    }
+    patternInput.addEventListener("focus", _ => expandSearch());
+    document.addEventListener("keyup", (e) => {
+        if (e.key == "Escape") {
+            collapseSearch();
+        }
+    });
+
+    collapseSearch();
+    return overlay;
+}
+
 window.onload = function() {
-    //alert("hello skyscope!");
-
-    const element = document.createElement("div");
-    document.body.appendChild(element);
-
-//    const viewport = createViewport();
-//    document.body.appendChild(viewport);
+    document.body.appendChild(createSearchInterface());
 
     findNodes("%enet%")
         .then(nodes => renderGraph(Object.keys(nodes)))
