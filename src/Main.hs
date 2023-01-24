@@ -19,6 +19,7 @@ import qualified Data.Attoparsec.Combinator as Parser
 import Data.Attoparsec.Text (Parser)
 import qualified Data.Attoparsec.Text as Parser
 import Data.Bifunctor (bimap)
+import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Coerce (coerce)
@@ -128,7 +129,8 @@ server :: Sqlite.Database -> IO ()
 server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      mainJs <- liftIO $ Text.readFile "/skyscope/src/main.js"
+      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/main.js"
+      themeCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/theme.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -138,6 +140,10 @@ server db = do
         --, Text.decodeUtf8 $(embedFile "src/main.js")
         , mainJs
         , "    </script>"
+        , "    <style>"
+        , themeCss
+        --, Text.decodeUtf8 $(embedFile "src/theme.css")
+        , "    </style>"
         , "  </head>"
         , "  <body></body>"
         , "</html>"

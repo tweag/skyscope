@@ -1,0 +1,18 @@
+div.resultRow span.nodeType { color: #3f3f3f; }
+
+div.FileState                 span.nodeType { color: hsla(71 , 55%, 29%, 1); }
+div.SingleToolchainResolution span.nodeType { color: hsla(7  , 55%, 29%, 1); }
+div.Glob                      span.nodeType { color: hsla(233, 55%, 29%, 1); }
+
+span.highlight {
+    color: #000000;
+    text-decoration: underline;
+}
+
+div.resultRow {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #7f7f7f;
+}
+

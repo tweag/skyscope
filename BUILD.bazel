@@ -8,7 +8,10 @@ haskell_binary(
         ":src/Main.hs",
         ":src/Sqlite.hs",
     ],
-    extra_srcs = [":src/main.js"],
+    extra_srcs = [
+        ":src/main.js",
+        ":src/theme.css",
+    ],
     deps = [
         ":base",
         "@stackage//:aeson",

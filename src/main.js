@@ -52,7 +52,7 @@ function createSearchInterface() {
         "top": "0",
     });
     const container = createElement("div", {}, overlay);
-    const setContainerMargin = (margin) => {
+    const setContainerMargin = margin => {
         setStyle(container, {
             "background-color": "#ccd7db",
             "border-radius": "20px",
@@ -80,9 +80,10 @@ function createSearchInterface() {
         "font-size": "18px",
         "font-style": "italic",
         "padding-left": "20px",
+        "user-select": "none",
         "color": "#4f4f4f",
     }, searchBox);
-    const updateNodeCount = (total) => {
+    const updateNodeCount = total => {
         nodeCount.textContent = total.toLocaleString() + " nodes";
     };
     var maxTotal = 0;
@@ -93,6 +94,7 @@ function createSearchInterface() {
         "color": "#4f4f4f",
         "padding": "8px 20px",
         "text-align": "right",
+        "user-select": "none",
     });
     collapseHint.textContent = "Press escape to collapse the search box and explore.";
     const results = createElement("div", {}, container);
@@ -101,13 +103,44 @@ function createSearchInterface() {
             results.removeChild(results.firstChild);
         }
     }
-    const renderResults = (total, nodes) => {
+    const renderResults = (total, nodes, pattern) => {
         clearResults();
         results.appendChild(collapseHint);
         for (const hash in nodes) {
             const node = nodes[hash]
-            createElement("div", { "font-size": "10px" }, results)
-                .textContent = node.nodeType + ":" + node.nodeData;
+            const words = [ ...node.nodeType.matchAll(/[^_]+/g) ];
+            const type = words.map(match => {
+                return match[0].charAt(0).toUpperCase()
+                     + match[0].slice(1).toLowerCase()
+            }).join("");
+            const row = createElement("div", {
+                //"background-color": "#bacdd4",
+                "padding-bottom": "5px",
+                "cursor": "pointer",
+                //"display": "flex",
+                //"flex-direction": "row",
+                //"flex-wrap": "nowrap",
+            }, results);
+            row.setAttribute("class", "resultRow " + type);
+            const typeSpan = createElement("span", {
+                "font-weight": "bold",
+                "margin-right": "10px",
+                "whitespace": "nowrap",
+                "overflow": "ellipsis",
+            }, row);
+            typeSpan.setAttribute("class", "nodeType");
+            typeSpan.textContent = type.replace(" (unshareable)", "");
+            const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(pattern.split("%").reduce((regex, piece) =>
+                regex + "(" + escapeRegExp(piece) + ")(.*)", "(.{0,16})"
+            ), "i");
+            const match = node.nodeData.match(regex);
+            match.slice(1).map((group, groupIndex) => {
+                const span = createElement("span", { }, row);
+                span.setAttribute("class", groupIndex % 2 == 0 ? "context" : "highlight");
+                const ellipsis = groupIndex == 0 && match.index != 0 ? "…" : "";
+                span.textContent = ellipsis + group;
+            });
         }
         maxTotal = Math.max(maxTotal, total);
         updateNodeCount(total);
@@ -122,16 +155,16 @@ function createSearchInterface() {
     };
     var findNodesInProgress = false;
     var findNodesPendingPattern = null;
-    const update = (pattern) => {
+    const update = pattern => {
         supersedableDelay(250, () => {
             if (findNodesInProgress) {
                 findNodesPendingPattern = pattern;
             } else {
-                const loop = (pattern) => {
+                const loop = pattern => {
                     findNodesInProgress = true;
-                    findNodes(pattern).then((result) => {
+                    findNodes(pattern).then(result => {
                         findNodesInProgress = false;
-                        renderResults(result[0], result[1]);
+                        renderResults(result[0], result[1], pattern);
                         if (findNodesPendingPattern != null) {
                             const pattern = findNodesPendingPattern;
                             findNodesPendingPattern = null;
@@ -154,17 +187,17 @@ function createSearchInterface() {
     const expandSearch = () => {
         setContainerMargin("30px 100px");
     };
-    patternInput.addEventListener("focus", (e) => {
+    patternInput.addEventListener("focus", e => {
         expandSearch();
         update(e.target.value);
     });
-    patternInput.addEventListener("input", (e) => {
+    patternInput.addEventListener("input", e => {
         update(e.target.value);
     });
-    patternInput.addEventListener("change", (e) => {
+    patternInput.addEventListener("change", e => {
         update(e.target.value);
     });
-    document.addEventListener("keyup", (e) => {
+    document.addEventListener("keyup", e => {
         if (e.key == "Escape") {
             collapseSearch();
         }
