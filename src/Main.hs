@@ -128,7 +128,7 @@ server :: Sqlite.Database -> IO ()
 server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      mainJs <- liftIO $ Text.readFile "/home/ben/git/skyscope/src/main.js"
+      mainJs <- liftIO $ Text.readFile "/skyscope/src/main.js"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -153,13 +153,16 @@ server db = do
   where
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
 
-findNodes :: Sqlite.Database -> Int64 -> Text -> IO (Map NodeHash Node)
+findNodes :: Sqlite.Database -> Int64 -> Text -> IO (Int64, Map NodeHash Node)
 findNodes db limit pattern = do
+  SQLInteger total <- Sqlite.executeSqlScalar db
+    [ "SELECT COUNT(hash) FROM node"
+    , "WHERE data LIKE ?" ] [ SQLText pattern ]
   records <- Sqlite.executeSql db
     [ "SELECT hash, type, data FROM node"
     , "WHERE data LIKE ? LIMIT ?;" ]
     [ SQLText pattern, SQLInteger limit ]
-  pure $ Map.fromList $ records <&> \
+  pure . (total, ) $ Map.fromList $ records <&> \
     [ SQLText hash, SQLText nodeType, SQLText nodeData ] ->
       (NodeHash hash, Node nodeType nodeData)
 

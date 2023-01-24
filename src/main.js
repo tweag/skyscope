@@ -9,7 +9,7 @@ async function post(url, data) {
 }
 
 async function findNodes(pattern) {
-    return JSON.parse(await post("/find", pattern));
+    return JSON.parse(await post("/find", "%" + pattern + "%"));
 }
 
 async function renderGraph(visibleNodes) {
@@ -42,19 +42,17 @@ function createElement(name, style = {}, parent) {
 }
 
 function createSearchInterface() {
-    const overlay = createElement("div");
-    const setOverlayStyle = function(height) {
-        setStyle(overlay, {
-            "display": "flex",
-            "position": "fixed",
-            "width": "100%",
-            "height": height,
-            "left": "0",
-            "top": "0",
-        });
-    }
+    const overlay = createElement("div", {
+        "display": "flex",
+        "position": "fixed",
+        "width": "100%",
+        "height": "auto",
+        "max-height": "100%",
+        "left": "0",
+        "top": "0",
+    });
     const container = createElement("div", {}, overlay);
-    const setContainerStyle = function(margin) {
+    const setContainerMargin = (margin) => {
         setStyle(container, {
             "background-color": "#ccd7db",
             "border-radius": "20px",
@@ -62,50 +60,124 @@ function createSearchInterface() {
             "margin": margin,
             "padding": "30px",
             "flex-grow": 1,
+            "overflow": "hidden",
         });
-    }
+    };
     const searchBox = createElement("div", {
         "align-items": "center",
         "display": "flex",
     }, container);
     const patternInput = createElement("input", {
         "flex-grow": 1,
-        "font-size": "28px",
+        "font-size": "18px",
         "padding": "5px 10px",
         "border-radius": "5px",
     }, searchBox);
+    patternInput.setAttribute("title", "The search pattern is a matched against SkyValues using SQLite LIKE.");
+    patternInput.setAttribute("placeholder", "Enter a search pattern here to find and display nodes "
+                                           + "in the Skyframe graph (you may use % as a wildcard)");
     const nodeCount = createElement("span", {
-        "font-size": "28px",
+        "font-size": "18px",
         "font-style": "italic",
         "padding-left": "20px",
         "color": "#4f4f4f",
     }, searchBox);
-    nodeCount.appendChild(document.createTextNode((61303).toLocaleString() + " nodes"))
-    function expandSearch() {
-        setOverlayStyle("100%");
-        setContainerStyle("30px 100px");
+    const updateNodeCount = (total) => {
+        nodeCount.textContent = total.toLocaleString() + " nodes";
+    };
+    var maxTotal = 0;
+    const collapseHint = createElement("div", {
+        "font-size": "12px",
+        "font-style": "italic",
+        "padding-left": "20px",
+        "color": "#4f4f4f",
+        "padding": "8px 20px",
+        "text-align": "right",
+    });
+    collapseHint.textContent = "Press escape to collapse the search box and explore.";
+    const results = createElement("div", {}, container);
+    const clearResults = () => {
+        while (results.firstChild) {
+            results.removeChild(results.firstChild);
+        }
     }
-    function collapseSearch() {
-        setOverlayStyle("auto");
-        setContainerStyle("30px 100px 0px");
+    const renderResults = (total, nodes) => {
+        clearResults();
+        results.appendChild(collapseHint);
+        for (const hash in nodes) {
+            const node = nodes[hash]
+            createElement("div", { "font-size": "10px" }, results)
+                .textContent = node.nodeType + ":" + node.nodeData;
+        }
+        maxTotal = Math.max(maxTotal, total);
+        updateNodeCount(total);
+    };
+    const activeTimeouts = {};
+    const supersedableDelay = (delay, action) => {
+        timeoutID = activeTimeouts[action];
+        if (timeoutID != undefined) {
+            window.clearTimeout(timeoutID);
+        }
+        activeTimeouts[action] = window.setTimeout(action, delay);
+    };
+    var findNodesInProgress = false;
+    var findNodesPendingPattern = null;
+    const update = (pattern) => {
+        supersedableDelay(250, () => {
+            if (findNodesInProgress) {
+                findNodesPendingPattern = pattern;
+            } else {
+                const loop = (pattern) => {
+                    findNodesInProgress = true;
+                    findNodes(pattern).then((result) => {
+                        findNodesInProgress = false;
+                        renderResults(result[0], result[1]);
+                        if (findNodesPendingPattern != null) {
+                            const pattern = findNodesPendingPattern;
+                            findNodesPendingPattern = null;
+                            loop(pattern);
+                        }
+                    });
+                };
+                loop(pattern);
+            }
+        });
+    }
+    const collapseSearch = () => {
+        setContainerMargin("30px 100px 0px");
+        patternInput.value = "";
         patternInput.blur();
+        clearResults();
+        updateNodeCount(maxTotal);
     }
-    patternInput.addEventListener("focus", _ => expandSearch());
+    collapseSearch();
+    const expandSearch = () => {
+        setContainerMargin("30px 100px");
+    };
+    patternInput.addEventListener("focus", (e) => {
+        expandSearch();
+        update(e.target.value);
+    });
+    patternInput.addEventListener("input", (e) => {
+        update(e.target.value);
+    });
+    patternInput.addEventListener("change", (e) => {
+        update(e.target.value);
+    });
     document.addEventListener("keyup", (e) => {
         if (e.key == "Escape") {
             collapseSearch();
         }
     });
-
-    collapseSearch();
+    window.setTimeout(() => patternInput.focus(), 100);
     return overlay;
 }
 
 window.onload = function() {
     document.body.appendChild(createSearchInterface());
 
-    findNodes("%enet%")
-        .then(nodes => renderGraph(Object.keys(nodes)))
+    findNodes("enet")
+        .then(result => renderGraph(Object.keys(result[1])))
         .then(svg => document.body.appendChild(svg));
 }
 
