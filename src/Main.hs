@@ -26,6 +26,7 @@ import Data.Coerce (coerce)
 import Data.FileEmbed (embedFile)
 import Data.Foldable (for_)
 import Data.Functor ((<&>))
+import Data.Int (Int64)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
@@ -36,13 +37,16 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import qualified Data.Text.IO as Text
 import qualified Data.Text.Lazy as LazyText
+import Data.Traversable (for)
 import Database.SQLite3 (SQLData(..))
 import GHC.Generics (Generic)
 import Network.HTTP.Types.Status (badRequest400)
 import Prelude
 import qualified Sqlite
+import System.Exit (ExitCode(..))
 import System.IO (IOMode(..), withFile)
 import System.Posix.Temp (mkdtemp)
+import System.Process.Text (readProcessWithExitCode)
 import qualified Web.Scotty as Web
 
 data Node = Node
@@ -65,7 +69,7 @@ type Graph = (Map NodeHash Node, Set Edge)
 
 main :: IO ()
 main = do
-  dir <- mkdtemp "skylight"
+  dir <- mkdtemp "skyscope"
   let path = dir <> "/database"
   Sqlite.withDatabase path $ \db ->
     importGraph db *> server db
@@ -93,6 +97,7 @@ importGraph db = do
       , [ "CREATE TABLE edge ("
         , "  source TEXT,"
         , "  target TEXT,"
+        , "  PRIMARY KEY (source, target),"
         , "  FOREIGN KEY (source) REFERENCES node(hash),"
         , "  FOREIGN KEY (target) REFERENCES node(hash)"
         , ");"
@@ -129,10 +134,10 @@ server db = do
     Web.get "/" $ Web.html $ LazyText.fromStrict $ Text.unlines
       [ "<html>"
       , "  <head>"
-      , "    <title>Skylight</title>"
+      , "    <title>Skyscope</title>"
       , "    <meta charset=\"UTF-8\">"
       , "    <script>"
-      , Text.decodeUtf8 $(embedFile "Main.js")
+      , Text.decodeUtf8 $(embedFile "src/main.js")
       , "    </script>"
       , "  </head>"
       , "  <body></body>"
@@ -149,18 +154,36 @@ server db = do
   where
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
 
-findNodes :: Sqlite.Database -> Int -> Text -> IO (Map NodeHash Node)
+findNodes :: Sqlite.Database -> Int64 -> Text -> IO (Map NodeHash Node)
 findNodes db limit pattern = do
   records <- Sqlite.executeSql db
     [ "SELECT hash, type, data FROM node"
-    , "WHERE data LIKE ?;" ] [ SQLText pattern ]
+    , "WHERE data LIKE ? LIMIT ?;" ]
+    [ SQLText pattern, SQLInteger limit ]
   pure $ Map.fromList $ records <&> \
     [ SQLText hash, SQLText nodeType, SQLText nodeData ] ->
       (NodeHash hash, Node nodeType nodeData)
 
 renderSvg :: Sqlite.Database -> [NodeHash] -> IO LazyText.Text
-renderSvg db nodes = undefined
-
+renderSvg db hashes = do
+  let mapOf = Map.fromList . map (\h -> (h, h))
+  nodes <- for (mapOf hashes) $ \(NodeHash hash) -> Sqlite.executeSql db
+    [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
+    [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
+  edges <- fmap concat $ for hashes $ \(NodeHash hash) -> Sqlite.executeSql db
+    [ "SELECT source, target FROM edge WHERE source = ?1 OR target = ?1;" ] [ SQLText hash ] <&>
+    map (\[ SQLText source, SQLText target ] -> Edge (NodeHash source) (NodeHash target))
+  let graph = Text.concat
+        [ "digraph {"
+        , Text.concat $ Map.assocs nodes <&> \(NodeHash hash, Node nodeType nodeData) ->
+            "node_" <> hash <> " [label=\"" <> nodeType <> ":" <> nodeData <>"\"];"
+        , Text.concat $ edges <&> \(Edge (NodeHash source) (NodeHash target)) ->
+            "node_" <> source <> " -> node_" <> target <> ";"
+        , "}"
+        ]
+  readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
+    (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
+    (ExitSuccess, svg, _) -> LazyText.fromStrict svg
 
 
 
@@ -169,7 +192,7 @@ writeGraphVizExample (nodes, edges) = do
   putStrLn $ "node count = " <> show (Map.size nodes) <> ", edge count = " <> show (Set.size edges)
   putStrLn $ "unique sources = " <> show (Set.size $ Set.map edgeSource $ edges)
   putStrLn $ "unique targets = " <> show (Set.size $ Set.map edgeTarget $ edges)
-  withFile "/tmp/skylight.dot" WriteMode $ \handle -> do
+  withFile "/tmp/skyscope.dot" WriteMode $ \handle -> do
     let writeLine = Text.hPutStrLn handle
         contains str nodeData = not $ null $ Text.breakOnAll str nodeData
     writeLine "digraph {"

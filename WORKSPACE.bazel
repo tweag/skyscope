@@ -1,0 +1,78 @@
+workspace(name = "skyscope")
+
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "rules_haskell",
+    sha256 = "2a07b55c30e526c07138c717b0343a07649e27008a873f2508ffab3074f3d4f3",
+    strip_prefix = "rules_haskell-0.16",
+    url = "https://github.com/tweag/rules_haskell/archive/refs/tags/v0.16.tar.gz",
+)
+
+load("@rules_haskell//haskell:repositories.bzl", "rules_haskell_dependencies")
+
+rules_haskell_dependencies()
+
+load("@rules_haskell//haskell:cabal.bzl", "stack_snapshot")
+
+stack_snapshot(
+    name = "stackage",
+    snapshot = "lts-18.18",
+    extra_deps = {"zlib": ["@zlib.dev//:zlib"]},
+    packages = [
+        "aeson",
+        "attoparsec",
+        "bytestring",
+        "containers",
+        "cryptohash-sha256",
+        "direct-sqlite",
+        "file-embed",
+        "http-types",
+        "process",
+        "process-extras",
+        "scotty",
+        "stm",
+        "text",
+        "time",
+        "unix",
+        "zlib",
+    ],
+)
+
+load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
+
+nixpkgs_git_repository(
+    name = "nixpkgs",
+    revision = "21.11",
+    sha256 = "c77bb41cf5dd82f4718fa789d49363f512bb6fa6bc25f8d60902fe2d698ed7cc",
+)
+
+load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
+
+nixpkgs_cc_configure(repository = "@nixpkgs")
+
+load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
+
+nixpkgs_python_configure(repository = "@nixpkgs")
+
+load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
+
+haskell_register_ghc_nixpkgs(
+    repository = "@nixpkgs",
+    attribute_path = "ghc",
+    version = "8.10.7",
+)
+
+load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
+
+nixpkgs_package(
+    name = "nixpkgs_zlib",
+    attribute_path = "zlib",
+    repository = "@nixpkgs",
+)
+
+nixpkgs_package(
+    name = "zlib.dev",
+    build_file = "//:zlib.BUILD.bazel",
+    repository = "@nixpkgs",
+)

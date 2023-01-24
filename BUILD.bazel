@@ -1,40 +1,14 @@
-# Set all target’s visibility in this package to "public".
-package(default_visibility = ["//visibility:public"])
+load("@rules_haskell//haskell:defs.bzl", "haskell_toolchain_library", "haskell_binary")
 
-# Load rules_haskell rules.
-load(
-    "@rules_haskell//haskell:defs.bzl",
-    "haskell_toolchain_library",
-    "haskell_library",
-    "haskell_binary",
-)
-
-# haskell_toolchain_library can access builtin GHC packages
-# and assign them a bazel target name, so that they
-# can be referenced as dependencies.
 haskell_toolchain_library(name = "base")
 
-# You can add your own libraries with haskell_library.
-# haskell_library(
-#     name = "MY_LIBRARY_NAME",
-#     src_strip_prefix = "src",
-#     srcs = glob(['src/**/*.hs']),
-#     deps = [
-#         "base_pkg"
-#     ],
-# )
-
-# An example binary using the Prelude module from the
-# GHC base package, and zlib from stackage, to print the hello world.
 haskell_binary(
-    name = "skylight",
+    name = "skyscope",
     srcs = [
-        ":Main.hs",
-        ":Sqlite.hs",
+        ":src/Main.hs",
+        ":src/Sqlite.hs",
     ],
-    extra_srcs = [
-        ":Main.js",
-    ],
+    extra_srcs = [":src/main.js"],
     deps = [
         ":base",
         "@stackage//:aeson",
@@ -46,6 +20,7 @@ haskell_binary(
         "@stackage//:file-embed",
         "@stackage//:http-types",
         "@stackage//:process",
+        "@stackage//:process-extras",
         "@stackage//:scotty",
         "@stackage//:stm",
         "@stackage//:text",
