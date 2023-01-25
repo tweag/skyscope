@@ -26,6 +26,7 @@ stack_snapshot(
         "containers",
         "cryptohash-sha256",
         "direct-sqlite",
+        "directory",
         "file-embed",
         "http-types",
         "process",

@@ -26,6 +26,7 @@ import Data.Coerce (coerce)
 import Data.FileEmbed (embedFile)
 import Data.Functor ((<&>))
 import Data.Int (Int64)
+import Data.List (nub)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
@@ -41,6 +42,7 @@ import GHC.Generics (Generic)
 import Network.HTTP.Types.Status (badRequest400)
 import Prelude
 import qualified Sqlite
+import System.Directory (getCurrentDirectory)
 import System.Exit (ExitCode(..))
 import System.Posix.Temp (mkdtemp)
 import System.Process.Text (readProcessWithExitCode)
@@ -68,6 +70,8 @@ main :: IO ()
 main = do
   dir <- mkdtemp "skyscope"
   let path = dir <> "/database"
+  absolutePath <- getCurrentDirectory <&> (<> ("/" <> path))
+  putStrLn $ "\x1b[1;33mdatabase: " <> absolutePath <> "\x1b[0m"
   Sqlite.withDatabase path $ \db ->
     importGraph db *> server db
 
@@ -178,17 +182,19 @@ renderSvg db hashes = do
   nodes <- for (mapOf hashes) $ \(NodeHash hash) -> Sqlite.executeSql db
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
-  edges <- fmap concat $ for hashes $ \(NodeHash hash) -> Sqlite.executeSql db
+  edges <- fmap (nub . concat) $ for hashes $ \(NodeHash hash) -> Sqlite.executeSql db
     [ "SELECT source, target FROM edge WHERE source = ?1 OR target = ?1;" ] [ SQLText hash ] <&>
     map (\[ SQLText source, SQLText target ] -> Edge (NodeHash source) (NodeHash target))
   let graph = Text.concat
-        [ "digraph {"
-        , Text.concat $ Map.assocs nodes <&> \(NodeHash hash, Node nodeType nodeData) ->
-            "node_" <> hash <> " [label=\"" <> nodeType <> ":" <> nodeData <>"\"];"
-        , Text.concat $ edges <&> \(Edge (NodeHash source) (NodeHash target)) ->
-            "node_" <> source <> " -> node_" <> target <> ";"
-        , "}"
+        [ "digraph {\n"
+        , Text.unlines $ Map.assocs nodes <&> \(NodeHash hash, Node nodeType nodeData) ->
+            --"node_" <> hash <> " [label=\"" <> nodeType <> ":" <> nodeData <> "\"];"
+            "    node_" <> hash <> " [label=\"" <> nodeType <> "\"];"
+        , Text.unlines $ edges <&> \(Edge (NodeHash source) (NodeHash target)) ->
+            "    node_" <> source <> " -> node_" <> target <> ";"
+        , "\n}"
         ]
+  Text.writeFile "/tmp/skyscope.dot" graph
   readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
     (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
     (ExitSuccess, svg, _) -> LazyText.fromStrict svg

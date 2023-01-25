@@ -1,8 +1,19 @@
 div.resultRow span.nodeType { color: #3f3f3f; }
 
-div.FileState                 span.nodeType { color: hsla(71 , 55%, 29%, 1); }
+div.FileState                 span.nodeType { color: hsla(271, 55%, 29%, 1); }
+div.File                      span.nodeType { color: hsla(271, 55%, 29%, 1); }
+div.DirectoryListing          span.nodeType { color: hsla(271, 55%, 29%, 1); }
+div.DirectoryListingState     span.nodeType { color: hsla(271, 55%, 29%, 1); }
 div.SingleToolchainResolution span.nodeType { color: hsla(7  , 55%, 29%, 1); }
+div.SingleToolchainResolution span.nodeType { color: hsla(7  , 55%, 29%, 1); }
+div.ToolchainResolution       span.nodeType { color: hsla(7  , 55%, 29%, 1); }
 div.Glob                      span.nodeType { color: hsla(233, 55%, 29%, 1); }
+div.ConfiguredTarget          span.nodeType { color: hsla(117, 55%, 29%, 1); }
+div.PackageLookup             span.nodeType { color: hsla(117, 55%, 29%, 1); }
+div.ContainingPackageLookup   span.nodeType { color: hsla(117, 55%, 29%, 1); }
+div.Artifact                  span.nodeType { color: hsla(71 , 55%, 29%, 1); }
+div.ArtifactNestedSet         span.nodeType { color: hsla(71 , 55%, 29%, 1); }
+div.ActionExecution           span.nodeType { color: hsla(318, 55%, 29%, 1); }
 
 span.highlight {
     color: #000000;
@@ -16,3 +27,6 @@ div.resultRow {
     color: #7f7f7f;
 }
 
+div.resultRow.visible {
+    background-color: #8ab3c1;
+}

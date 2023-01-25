@@ -20,6 +20,7 @@ haskell_binary(
         "@stackage//:containers",
         "@stackage//:cryptohash-sha256",
         "@stackage//:direct-sqlite",
+        "@stackage//:directory",
         "@stackage//:file-embed",
         "@stackage//:http-types",
         "@stackage//:process",
