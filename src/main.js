@@ -80,6 +80,7 @@ function supersedableDelayedAction(delay, payload, action) {
 
 window.onload = function() {
     const graph = createElement("div", {
+        "text-align": "center",
         "margin-top": "200px",
     });
     const visibleNodes = {};
@@ -109,7 +110,6 @@ window.onload = function() {
             "opacity": "95%",
             "margin": margin,
             "padding": "30px",
-            //"flex-grow": 1,
             "overflow": "hidden",
             "min-width": "800px",
         });
@@ -165,6 +165,7 @@ window.onload = function() {
             }).join("");
             const row = createElement("div", {
                 "padding-bottom": "5px",
+                "user-select": "none",
                 "cursor": "pointer",
             }, results);
             row.title = node.nodeData;

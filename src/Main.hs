@@ -10,6 +10,7 @@
 
 module Main where
 
+import Control.Monad (join)
 import Control.Monad.IO.Class (liftIO)
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (FromJSON, ToJSON, ToJSONKey)
@@ -72,8 +73,7 @@ main = do
   let path = dir <> "/database"
   absolutePath <- getCurrentDirectory <&> (<> ("/" <> path))
   putStrLn $ "\x1b[1;33mdatabase: " <> absolutePath <> "\x1b[0m"
-  Sqlite.withDatabase path $ \db ->
-    importGraph db *> server db
+  Sqlite.withDatabase path $ \db -> importGraph db *> server db
 
 importGraph :: Sqlite.Database -> IO ()
 importGraph db = do
@@ -138,6 +138,7 @@ server db = do
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
+        , "    <link rel=\"icon\" href=\"data:image/svg+xml," <> favicon <> "\">"
         , "    <title>Skyscope</title>"
         , "    <meta charset=\"UTF-8\">"
         , "    <script>"
@@ -162,6 +163,8 @@ server db = do
       Left err -> badRequest err
   where
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
+    favicon = "<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 "
+      <> "100 100%22><text y=%22.9em%22 font-size=%2290%22>🔭</text></svg>"
 
 findNodes :: Sqlite.Database -> Int64 -> Text -> IO (Int64, Map NodeHash Node)
 findNodes db limit pattern = do
@@ -178,23 +181,56 @@ findNodes db limit pattern = do
 
 renderSvg :: Sqlite.Database -> [NodeHash] -> IO LazyText.Text
 renderSvg db hashes = do
-  let mapOf = Map.fromList . map (\h -> (h, h))
-  nodes <- for (mapOf hashes) $ \(NodeHash hash) -> Sqlite.executeSql db
-    [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
-    [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
   edges <- fmap (nub . concat) $ for hashes $ \(NodeHash hash) -> Sqlite.executeSql db
     [ "SELECT source, target FROM edge WHERE source = ?1 OR target = ?1;" ] [ SQLText hash ] <&>
     map (\[ SQLText source, SQLText target ] -> Edge (NodeHash source) (NodeHash target))
-  let graph = Text.concat
-        [ "digraph {\n"
-        , Text.unlines $ Map.assocs nodes <&> \(NodeHash hash, Node nodeType nodeData) ->
-            --"node_" <> hash <> " [label=\"" <> nodeType <> ":" <> nodeData <> "\"];"
-            "    node_" <> hash <> " [label=\"" <> nodeType <> "\"];"
-        , Text.unlines $ edges <&> \(Edge (NodeHash source) (NodeHash target)) ->
-            "    node_" <> source <> " -> node_" <> target <> ";"
-        , "\n}"
+  let nodeIdentityMap = Map.fromList $ map (join (,)) $
+        edges >>= \(Edge source target) -> [ source, target ]
+  nodeMap <- for nodeIdentityMap $ \(NodeHash hash) -> Sqlite.executeSql db
+    [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
+    [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
+  let graph = Text.unlines
+        [ "digraph {"
+        , "    node" <> graphvizAttributes
+                [ ("color", "#efefef")
+                , ("penwidth", "0.2")
+                , ("style", "filled,rounded")
+                ]
+        , "    edge" <> graphvizAttributes
+                [ ("arrowsize", "0.5")
+                , ("color", "#3f3f3f")
+                , ("penwidth", "0.2")
+                ]
+        , Text.unlines $ uncurry graphvizNode <$> Map.assocs nodeMap
+        , Text.unlines $ graphvizEdge <$> edges
+        , "}"
         ]
-  Text.writeFile "/tmp/skyscope.dot" graph
+  Text.writeFile "/tmp/skyscope.dot" graph  -- For debugging
   readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
     (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
     (ExitSuccess, svg, _) -> LazyText.fromStrict svg
+  where
+    graphvizNode :: NodeHash -> Node -> Text
+    graphvizNode nodeHash@(NodeHash hash) (Node nodeType nodeData) =
+      let hidden = nodeHash `notElem` hashes
+          label = nodeType <> "\\n" <> Text.take 32 hash
+          tooltip = nodeType <> ":" <> nodeData <> "\n\n" <>
+            if hidden then "Click this node to show it."
+            else "Hold ctrl and click this node to hide it."
+      in "    node_" <> hash <> graphvizAttributes
+        [ ("shape", if hidden then "point" else "box")
+        , ("width", if hidden then "0.1" else "3.0")
+        , ("height", if hidden then "0.1" else "0.6")
+        , ("fixedsize", "true")
+        , ("tooltip", tooltip)
+        , ("label", label)
+        , ("id", hash)
+        ]
+    graphvizEdge :: Edge -> Text
+    graphvizEdge (Edge (NodeHash source) (NodeHash target)) =
+      "    node_" <> source <> " -> node_" <> target <>
+      graphvizAttributes [ ("id", source <> "_" <> target) ]
+    graphvizAttributes :: [(Text, Text)] -> Text
+    graphvizAttributes attrs =
+      let f (name, value) = name <> "=\"" <> value <> "\""
+      in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
