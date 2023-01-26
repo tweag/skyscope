@@ -51,22 +51,22 @@ async function findNodes(pattern) {
     return JSON.parse(await post("/find", "%" + pattern + "%"));
 }
 
-async function renderGraph(visibleNodes) {
+async function renderGraph(hashes) {
     const parser = new DOMParser();
-    const body = await post("/render", visibleNodes);
+    const body = await post("/render", hashes);
     const doc = parser.parseFromString(body, "image/svg+xml");
     return doc.getElementsByTagNameNS(svgNS, "svg")[0];
 }
 
-function prettyNodeType(node) {
+function prettyNodeType(nodeType) {
     return [
-        ...node.nodeType.matchAll(/[^_]+/g)
+        ...nodeType.matchAll(/[^_]+/g)
     ].map(match => match[0].charAt(0).toUpperCase()
                  + match[0].slice(1).toLowerCase()
     ).join("").replace(" (unshareable)", "");
 }
 
-function prettyNodeLabel(type, nodeData) {
+function prettyNodeLabel(hash, type, nodeData) {
     var match = null;
     switch (type) {
         case "File":
@@ -113,33 +113,38 @@ function prettyNodeLabel(type, nodeData) {
             }
             break;
     }
-    return null;
+    return hash.slice(0, 32);
 }
 
-function decorateGraph(svg, visibleNodes) {
+function decorateGraph(svg, toggleNode) {
     for (const nodeElement of svg.getElementsByClassName("node")) {
-        const node = visibleNodes[nodeElement.id];
-        if (node != null) {
-            const textElements = nodeElement.getElementsByTagName("text");
+        const hash = nodeElement.id;
+        const textElements = nodeElement.getElementsByTagName("text");
+        if (textElements.length == 2) {
             const typeElement = textElements[0];
             const labelElement = textElements[1];
-            const type = prettyNodeType(node);
+            const type = prettyNodeType(typeElement.textContent);
             typeElement.textContent = type;
             typeElement.setAttribute("class", "nodeType");
             if (type in theme) {
                 typeElement.setAttribute("fill", theme[type]);
             }
             labelElement.setAttribute("class", "nodeLabel");
-            nodeElement.setAttribute("class", "node " + type);
-            const label = prettyNodeLabel(type, node.nodeData);
+            const label = prettyNodeLabel(hash, type, labelElement.textContent);
             if (label != null) {
                 const maxChars = 40;
                 const ellipsis = label.length > maxChars ? "…" : "";
                 labelElement.textContent = ellipsis + label.slice(-maxChars);
             }
+            nodeElement.setAttribute("class", "node " + type);
+            nodeElement.addEventListener("click", e => {
+                if (e.ctrlKey) {
+                    toggleNode(hash);
+                }
+            });
         } else {
-
-        }
+            nodeElement.addEventListener("click", e => toggleNode(hash));
+        }   
     }
 }
 
@@ -180,10 +185,10 @@ window.onload = function() {
         "margin-top": "200px",
     });
     const visibleNodes = {};
-    const updateGraph = () => {
-        supersedableDelayedAction(1000, Object.keys(visibleNodes), (hashes) => {
+    const updateGraph = (toggleNode) => {
+        supersedableDelayedAction(500, Object.keys(visibleNodes), (hashes) => {
             return renderGraph(hashes).then(svg => {
-                decorateGraph(svg, visibleNodes);
+                decorateGraph(svg, toggleNode);
                 removeAllChildren(graph);
                 graph.appendChild(svg);
             });
@@ -255,7 +260,7 @@ window.onload = function() {
         results.appendChild(hint);
         for (const hash in nodes) {
             const node = nodes[hash]
-            type = prettyNodeType(node);
+            type = prettyNodeType(node.nodeType);
             const row = createElement("div", {
                 "padding-bottom": "5px",
                 "user-select": "none",
@@ -292,14 +297,17 @@ window.onload = function() {
                     span.textContent = group;
                 }
             });
-            row.addEventListener("click", e => {
+            const toggleNode = hash => {
                 if (hash in visibleNodes) {
                     delete visibleNodes[hash];
                 } else {
-                    visibleNodes[hash] = node;
+                    visibleNodes[hash] = true;
                 }
+                updateGraph(toggleNode);
+            }
+            row.addEventListener("click", e => {
+                toggleNode(hash);
                 renderResults(total, nodes, pattern);
-                updateGraph();
             });
         }
         maxTotal = Math.max(maxTotal, total);
@@ -344,4 +352,3 @@ window.onload = function() {
     document.body.appendChild(graph);
     loadTheme().then(() => updateGraph());
 }
-

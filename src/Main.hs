@@ -153,11 +153,6 @@ server db = do
         , "  <body></body>"
         , "</html>"
         ]
-    Web.get "/theme" $ do
-        themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/theme.json"
-        Web.setHeader "Content-Type" "application/json"
-        --Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "theme.json")
-        Web.text $ LazyText.fromStrict themeJson
     Web.post "/find" $ Json.eitherDecode <$> Web.body >>= \case
       Right pattern -> Web.json =<< liftIO (findNodes db 100 pattern)
       Left err -> badRequest err
@@ -166,6 +161,11 @@ server db = do
         Web.setHeader "Content-Type" "image/svg+xml"
         Web.text =<< liftIO (renderSvg db visibleNodes)
       Left err -> badRequest err
+    Web.get "/theme" $ do
+        themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/theme.json"
+        Web.setHeader "Content-Type" "application/json"
+        --Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "theme.json")
+        Web.text $ LazyText.fromStrict themeJson
   where
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
     favicon = "<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 "
@@ -217,7 +217,7 @@ renderSvg db hashes = do
   where
     graphvizNode :: NodeHash -> Node -> Text
     graphvizNode nodeHash@(NodeHash hash) (Node nodeType nodeData) =
-      let label = nodeType <> "\\n" <> Text.take 32 hash
+      let label = nodeType <> "\\n" <> nodeData
           hidden = nodeHash `notElem` hashes
           tooltip = nodeData <> "\n\n" <>
             if hidden then "Click this node to show it."

@@ -27,4 +27,6 @@ text.nodeLabel {
 
 g.node {
     fill: #3f3f3f;
+    cursor: pointer;
+    user-select: none;
 }
