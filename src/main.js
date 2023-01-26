@@ -51,9 +51,9 @@ async function findNodes(pattern) {
     return JSON.parse(await post("/find", "%" + pattern + "%"));
 }
 
-async function renderGraph(hashes) {
+async function renderGraph(nodeStates) {
     const parser = new DOMParser();
-    const body = await post("/render", hashes);
+    const body = await post("/render", nodeStates);
     const doc = parser.parseFromString(body, "image/svg+xml");
     return doc.getElementsByTagNameNS(svgNS, "svg")[0];
 }
@@ -73,6 +73,7 @@ function prettyNodeLabel(hash, type, nodeData) {
         case "FileState":
         case "DirectoryListing":
         case "DirectoryListingState":
+        case "WorkspaceFile":
             match = nodeData.match(/.*\[([^\]]*)\]\/\[([^\]]*)\]/);
             if (match != null) {
                 return match[1] + "/" + match[2];
@@ -95,6 +96,7 @@ function prettyNodeLabel(hash, type, nodeData) {
         case "BzlLoad":
         case "Package":
         case "PackageLookup":
+        case "RepositoryDirectory":
             match = nodeData.match(/:(.*)/);
             if (match != null) {
                 return match[1];
@@ -116,35 +118,55 @@ function prettyNodeLabel(hash, type, nodeData) {
     return hash.slice(0, 32);
 }
 
-function decorateGraph(svg, toggleNode) {
+function decorateGraph(svg, Node) {
     for (const nodeElement of svg.getElementsByClassName("node")) {
+        const nodeClasses = nodeElement.classList;
         const hash = nodeElement.id;
+        const ellipseElements = nodeElement.getElementsByTagName("ellipse");
+        const pathElements = nodeElement.getElementsByTagName("path");
         const textElements = nodeElement.getElementsByTagName("text");
-        if (textElements.length == 2) {
+        if (pathElements.length == 1 && textElements.length == 2) {
+            pathElements[0].classList.add("selectable");
             const typeElement = textElements[0];
             const labelElement = textElements[1];
             const type = prettyNodeType(typeElement.textContent);
+            nodeClasses.add(type);
             typeElement.textContent = type;
-            typeElement.setAttribute("class", "nodeType");
-            if (type in theme) {
-                typeElement.setAttribute("fill", theme[type]);
-            }
-            labelElement.setAttribute("class", "nodeLabel");
+            typeElement.classList.add("nodeType");
+            typeElement.setAttribute("fill", type in theme ? theme[type] : "#3f3f3f");
             const label = prettyNodeLabel(hash, type, labelElement.textContent);
             if (label != null) {
                 const maxChars = 40;
                 const ellipsis = label.length > maxChars ? "…" : "";
                 labelElement.textContent = ellipsis + label.slice(-maxChars);
             }
-            nodeElement.setAttribute("class", "node " + type);
+            labelElement.classList.add("nodeLabel");
+            const linkElement = nodeElement.getElementsByTagName("a")[0];
+            const tooltip = linkElement.getAttribute("xlink:title");
+            const setHint = hint => linkElement.setAttribute("xlink:title",
+                tooltip.replace(/\n\nClick.*/, "\n\n" + hint)
+            );
             nodeElement.addEventListener("click", e => {
                 if (e.ctrlKey) {
-                    toggleNode(hash);
+                    Node.hide(hash);
+                } else if (e.shiftKey) {
+                    if (Node.selected(hash)) {
+                        Node.unselect(hash);
+                    } else {
+                        Node.select(hash);
+                    }
+                } else {
+                    if (nodeClasses.contains("Collapsed")) {
+                        Node.expand(hash);
+                    } else {
+                        Node.collapse(hash);
+                    }
                 }
             });
-        } else {
-            nodeElement.addEventListener("click", e => toggleNode(hash));
-        }   
+        } else if (ellipseElements.length == 1) {
+            ellipseElements[0].classList.add("node");
+            nodeElement.addEventListener("click", e => Node.show(hash));
+        }
     }
 }
 
@@ -180,15 +202,43 @@ function supersedableDelayedAction(delay, payload, action) {
 };
 
 window.onload = function() {
+    const nodeStates = {};
+    const selection = {};
+    const Node = {
+        collapse: hash => {
+            nodeStates[hash] = true;
+            updateGraph(Node);
+        },
+        expand: hash => {
+            nodeStates[hash] = false;
+            updateGraph(Node);
+        },
+        show: hash => {
+            nodeStates[hash] = false;
+            updateGraph(Node);
+        },
+        hide: hash => {
+            delete nodeStates[hash];
+            updateGraph(Node);
+        },
+        hidden: hash => {
+            return !(hash in nodeStates);
+        },
+        select: hash => {
+            selection[hash] = true;
+        },
+        unselect: hash => {
+            delete section[hash];
+        },
+    };
     const graph = createElement("div", {
         "text-align": "center",
         "margin-top": "200px",
     });
-    const visibleNodes = {};
-    const updateGraph = (toggleNode) => {
-        supersedableDelayedAction(500, Object.keys(visibleNodes), (hashes) => {
-            return renderGraph(hashes).then(svg => {
-                decorateGraph(svg, toggleNode);
+    const updateGraph = (Node) => {
+        supersedableDelayedAction(500, nodeStates, (nodeStates) => {
+            return renderGraph(nodeStates).then(svg => {
+                decorateGraph(svg, Node);
                 removeAllChildren(graph);
                 graph.appendChild(svg);
             });
@@ -251,13 +301,15 @@ window.onload = function() {
         "text-align": "right",
         "user-select": "none",
     });
-    hint.textContent
-        = "Click the nodes below to toggle their visibility. "
-        + "Press escape to collapse the search box and explore.";
     const results = createElement("div", {}, container);
+    const addHint = content => {
+        hint.textContent = content;
+        results.appendChild(hint);
+    }
     const renderResults = (total, nodes, pattern) => {
         removeAllChildren(results);
-        results.appendChild(hint);
+        addHint("Click the nodes below to toggle their visibility. "
+            + "Press escape to collapse the search box and explore.")
         for (const hash in nodes) {
             const node = nodes[hash]
             type = prettyNodeType(node.nodeType);
@@ -267,8 +319,10 @@ window.onload = function() {
                 "cursor": "pointer",
             }, results);
             row.title = node.nodeData;
-            const classes = [ "resultRow", type, hash in visibleNodes ? "visible" : "hidden" ];
-            row.setAttribute("class", classes.join(" "));
+            row.classList.add("resultRow", type);
+            if (!Node.hidden(hash)) {
+                row.classList.add("selected");
+            }
             const typeSpan = createElement("span", {
                 "font-weight": "bold",
                 "margin-right": "10px",
@@ -276,7 +330,7 @@ window.onload = function() {
                 "overflow": "ellipsis",
             }, row);
             typeSpan.textContent = type;
-            typeSpan.setAttribute("class", "nodeType");
+            typeSpan.classList.add("nodeType");
             const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const regex = new RegExp(pattern.split("%").reduce((fullRegex, piece) => {
                 const pieceRegex = escapeRegExp(piece).replaceAll("_", ".");
@@ -285,7 +339,7 @@ window.onload = function() {
             const match = node.nodeData.match(regex);
             match.slice(1).map((group, groupIndex) => {
                 const span = createElement("span", { }, row);
-                span.setAttribute("class", groupIndex % 2 == 0 ? "context" : "highlight");
+                span.classList.add(groupIndex % 2 == 0 ? "context" : "highlight");
                 if (groupIndex == 0) {
                     const startIndex = Math.min(
                         Math.max(0, group.length - 16),  // Always show the last 16 chars of the first group,
@@ -297,16 +351,12 @@ window.onload = function() {
                     span.textContent = group;
                 }
             });
-            const toggleNode = hash => {
-                if (hash in visibleNodes) {
-                    delete visibleNodes[hash];
-                } else {
-                    visibleNodes[hash] = true;
-                }
-                updateGraph(toggleNode);
-            }
             row.addEventListener("click", e => {
-                toggleNode(hash);
+                if (Node.hidden(hash)) {
+                    Node.show(hash);
+                } else {
+                    Node.hide(hash);
+                }
                 renderResults(total, nodes, pattern);
             });
         }
@@ -321,6 +371,12 @@ window.onload = function() {
             });
         });
     }
+    patternInput.addEventListener("input", e => {
+        updateSearch(e.target.value);
+    });
+    patternInput.addEventListener("change", e => {
+        updateSearch(e.target.value);
+    });
     const collapseSearch = () => {
         setContainerMargin("30px 30px 0px");
         patternInput.value = "";
@@ -336,19 +392,25 @@ window.onload = function() {
         expandSearch();
         updateSearch(e.target.value);
     });
-    patternInput.addEventListener("input", e => {
-        updateSearch(e.target.value);
-    });
-    patternInput.addEventListener("change", e => {
-        updateSearch(e.target.value);
+    document.addEventListener("keydown", e => {
+        switch (e.key) {
+            case "Shift":
+                break;
+        }
     });
     document.addEventListener("keyup", e => {
-        if (e.key == "Escape") {
-            collapseSearch();
+        switch (e.key) {
+            case "Shift":
+                break;
+            case "Escape":
+                collapseSearch();
+                break;
         }
     });
     window.setTimeout(() => patternInput.focus(), 100);
     document.body.appendChild(overlay);
     document.body.appendChild(graph);
-    loadTheme().then(() => updateGraph());
+    loadTheme().then(() =>
+        updateGraph(Node)
+    );
 }

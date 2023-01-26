@@ -12,7 +12,7 @@ div.resultRow {
     color: #7f7f7f;
 }
 
-div.resultRow.visible {
+div.resultRow.selected {
     background-color: #8ab3c1;
 }
 
@@ -29,4 +29,14 @@ g.node {
     fill: #3f3f3f;
     cursor: pointer;
     user-select: none;
+}
+
+ellipse.node {
+    fill: #ffffff;
+    stroke: #3f3f3f;
+}
+
+g.node.Collapsed path {
+    fill: #ffffff;
+    stroke: #ffffff;
 }

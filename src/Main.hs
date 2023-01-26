@@ -10,10 +10,10 @@
 
 module Main where
 
-import Control.Monad (join)
+import Control.Monad (guard, join)
 import Control.Monad.IO.Class (liftIO)
 import qualified Crypto.Hash.SHA256 as SHA256
-import Data.Aeson (FromJSON, ToJSON, ToJSONKey)
+import Data.Aeson (FromJSON, FromJSONKey, FromJSONKeyFunction(..), ToJSON, ToJSONKey)
 import qualified Data.Aeson as Json
 import Data.Aeson.Types (toJSONKeyText)
 import qualified Data.Attoparsec.Combinator as Parser
@@ -56,6 +56,9 @@ data Node = Node
 
 newtype NodeHash = NodeHash Text
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
+
+instance FromJSONKey NodeHash where
+  fromJSONKey = FromJSONKeyCoerce
 
 instance ToJSONKey NodeHash where
   toJSONKey = toJSONKeyText coerce
@@ -133,8 +136,8 @@ server :: Sqlite.Database -> IO ()
 server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/main.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/style.css"
+      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/src/main.js"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -162,7 +165,7 @@ server db = do
         Web.text =<< liftIO (renderSvg db visibleNodes)
       Left err -> badRequest err
     Web.get "/theme" $ do
-        themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/theme.json"
+        themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/theme.json"
         Web.setHeader "Content-Type" "application/json"
         --Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "theme.json")
         Web.text $ LazyText.fromStrict themeJson
@@ -184,13 +187,25 @@ findNodes db limit pattern = do
     [ SQLText hash, SQLText nodeType, SQLText nodeData ] ->
       (NodeHash hash, Node nodeType nodeData)
 
-renderSvg :: Sqlite.Database -> [NodeHash] -> IO LazyText.Text
+data NodeState
+  = Collapsed
+  | Expanded
+  | Hidden
+  deriving (Eq, Show)
+
+renderSvg :: Sqlite.Database -> Map NodeHash Bool -> IO LazyText.Text
 renderSvg db hashes = do
-  edges <- fmap (nub . concat) $ for hashes $ \(NodeHash hash) -> Sqlite.executeSql db
-    [ "SELECT source, target FROM edge WHERE source = ?1 OR target = ?1;" ] [ SQLText hash ] <&>
-    map (\[ SQLText source, SQLText target ] -> Edge (NodeHash source) (NodeHash target))
-  let nodeIdentityMap = Map.fromList $ map (join (,)) $
-        edges >>= \(Edge source target) -> [ source, target ]
+  edges <- fmap (nub . concat) $ flip Map.traverseWithKey hashes $
+    \(NodeHash hash) collapsed -> Sqlite.executeSql db
+      [ "SELECT source, target FROM edge WHERE source = ?1 OR target = ?1;" ]
+      [ SQLText hash ] <&> (>>= (\[ SQLText s, SQLText t ] ->
+        let source = NodeHash s
+            target = NodeHash t
+            hidden  = (`Map.notMember` hashes)
+        in if collapsed && (hidden source || hidden target)
+            then [] else [ Edge (NodeHash s) (NodeHash t) ]))
+  let nodeIdentityMap = Map.fromList $ map (join (,)) $ Map.keys hashes <>
+        (edges >>= \(Edge source target) -> [ source, target ])
   nodeMap <- for nodeIdentityMap $ \(NodeHash hash) -> Sqlite.executeSql db
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
@@ -218,19 +233,20 @@ renderSvg db hashes = do
     graphvizNode :: NodeHash -> Node -> Text
     graphvizNode nodeHash@(NodeHash hash) (Node nodeType nodeData) =
       let label = nodeType <> "\\n" <> nodeData
-          hidden = nodeHash `notElem` hashes
-          tooltip = nodeData <> "\n\n" <>
-            if hidden then "Click this node to show it."
-            else "Hold ctrl and click this node to hide it."
+          nodeState = case Map.lookup nodeHash hashes of
+            Just True -> Collapsed
+            Just False -> Expanded
+            Nothing -> Hidden
       in "    node_" <> hash <> graphvizAttributes
-        [ ("shape", if hidden then "point" else "box")
-        , ("width", if hidden then "0.1" else "3.0")
-        , ("height", if hidden then "0.1" else "0.6")
-        , ("fixedsize", "true")
-        , ("tooltip", tooltip)
-        , ("label", label)
-        , ("id", hash)
-        ]
+              [ ("class", Text.pack $ show nodeState)
+              , ("tooltip", nodeData <> "\n\nClick here to ...")
+              , ("width", if nodeState == Hidden then "0.1" else "3.0")
+              , ("height", if nodeState == Hidden then "0.1" else "0.6")
+              , ("shape", if nodeState == Hidden then "point" else "box")
+              , ("fixedsize", "true")
+              , ("label", label)
+              , ("id", hash)
+              ]
     graphvizEdge :: Edge -> Text
     graphvizEdge (Edge (NodeHash source) (NodeHash target)) =
       "    node_" <> source <> " -> node_" <> target <>
@@ -239,3 +255,8 @@ renderSvg db hashes = do
     graphvizAttributes attrs =
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
+
+
+{- nodeData <> "\n\n" <>
+            if hidden then "Click this node to show it."
+            else "Hold ctrl and click this node to hide it." -}

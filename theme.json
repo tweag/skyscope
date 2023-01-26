@@ -8,7 +8,7 @@
     "ToolchainResolution":       { "h":   7, "s": 55, "l": 29 },
     "Glob":                      { "h": 233, "s": 55, "l": 29 },
     "ConfiguredTarget":          { "h": 117, "s": 55, "l": 29 },
-    "TargetCompletion":          { "h": 117, "s": 55, "l": 29 },
+    "TargetCompletion":          { "h": 198, "s": 55, "l": 29 },
     "PackageLookup":             { "h": 117, "s": 55, "l": 29 },
     "ContainingPackageLookup":   { "h": 117, "s": 55, "l": 29 },
     "Artifact":                  { "h":  71, "s": 55, "l": 29 },
