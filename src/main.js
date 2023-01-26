@@ -1,5 +1,44 @@
 const svgNS = "http://www.w3.org/2000/svg";
 
+function setStyle(element, style) {
+    element.setAttribute("style", Object.entries(style)
+        .map(entry => entry[0] + ":" + entry[1]).join(";")
+    );
+}
+
+function createElement(name, style = {}, parent) {
+    const element = document.createElement(name);
+    setStyle(element, style)
+    if (parent !== undefined) {
+        parent.appendChild(element);
+    }
+    return element
+}
+
+function removeAllChildren(node) {
+    while (node.firstChild) {
+        node.removeChild(node.firstChild);
+    }
+}
+
+const theme = {};
+async function loadTheme() {
+    const response = await fetch("/theme", { method: "GET" });
+    if (!response.ok) {
+        throw new Error("GET /theme failed: " + response.statusText);
+    }
+    for (k in theme) {
+        delete theme[k];
+    }
+    const json = JSON.parse(await response.text());
+    const css = Object.keys(json).map(nodeType => {
+        const color = json[nodeType];
+        theme[nodeType] = `hsl(${color.h}, ${color.s}%, ${color.l}%)`;
+        return `div.${nodeType} span.nodeType { color: ${theme[nodeType]}; }`
+    }).join("\n");
+    createElement("style", {}, document.head).textContent = css;
+}
+
 async function post(url, data) {
     const response = await fetch(url, { method: "POST", body: JSON.stringify(data) });
     if (!response.ok) {
@@ -19,31 +58,88 @@ async function renderGraph(visibleNodes) {
     return doc.getElementsByTagNameNS(svgNS, "svg")[0];
 }
 
-function createViewport() {
-    const svg = document.createElementNS(svgNS, "svg");
-    svg.setAttribute("version", "2");
-    svg.setAttribute("href", "file:///tmp/render.svg");
-    return svg;
+function prettyNodeType(node) {
+    return [
+        ...node.nodeType.matchAll(/[^_]+/g)
+    ].map(match => match[0].charAt(0).toUpperCase()
+                 + match[0].slice(1).toLowerCase()
+    ).join("").replace(" (unshareable)", "");
 }
 
-function setStyle(element, style) {
-    element.setAttribute("style", Object.entries(style)
-        .map(entry => entry[0] + ":" + entry[1]).join(";")
-    );
-}
-
-function createElement(name, style = {}, parent) {
-    const element = document.createElement(name);
-    setStyle(element, style)
-    if (parent !== undefined) {
-        parent.appendChild(element);
+function prettyNodeLabel(type, nodeData) {
+    var match = null;
+    switch (type) {
+        case "File":
+        case "FileState":
+        case "DirectoryListing":
+        case "DirectoryListingState":
+            match = nodeData.match(/.*\[([^\]]*)\]\/\[([^\]]*)\]/);
+            if (match != null) {
+                return match[1] + "/" + match[2];
+            }
+            break;
+        case "ActionExecution":
+        case "ConfiguredTarget":
+        case "TargetCompletion":
+            match = nodeData.match(/label=(.+), config/);
+            if (match != null) {
+                return match[1];
+            }
+            break;
+        case "Artifact":
+            match = nodeData.match(/\[.*\]([^\[\]]+)/);
+            if (match != null) {
+                return match[1];
+            }
+            break;
+        case "BzlLoad":
+        case "Package":
+        case "PackageLookup":
+            match = nodeData.match(/:(.*)/);
+            if (match != null) {
+                return match[1];
+            }
+            break;
+        case "Glob":
+            match = nodeData.match(/subdir=(.*) pattern=(.+) globberOperation/);
+            if (match != null) {
+                return match[1] + (match[1].length > 0 ? "/" : "") + match[2];
+            }
+            break;
+        case "SingleToolchainResolution":
+            match = nodeData.match(/toolchainTypeLabel=(.+), targetPlatformKey/);
+            if (match != null) {
+                return match[1];
+            }
+            break;
     }
-    return element
+    return null;
 }
 
-function removeAllChildren(node) {
-    while (node.firstChild) {
-        node.removeChild(node.firstChild);
+function decorateGraph(svg, visibleNodes) {
+    for (const nodeElement of svg.getElementsByClassName("node")) {
+        const node = visibleNodes[nodeElement.id];
+        if (node != null) {
+            const textElements = nodeElement.getElementsByTagName("text");
+            const typeElement = textElements[0];
+            const labelElement = textElements[1];
+            const type = prettyNodeType(node);
+            typeElement.textContent = type;
+            typeElement.setAttribute("class", "nodeType");
+            if (type in theme) {
+                typeElement.setAttribute("fill", theme[type]);
+            }
+            labelElement.setAttribute("class", "nodeLabel");
+            nodeElement.setAttribute("class", "node " + type);
+            const label = prettyNodeLabel(type, node.nodeData);
+            if (label != null) {
+                const maxChars = 40;
+                const ellipsis = label.length > maxChars ? "…" : "";
+                labelElement.textContent = ellipsis + label.slice(-maxChars);
+            }
+        } else {
+
+        }
     }
 }
 
@@ -87,6 +183,7 @@ window.onload = function() {
     const updateGraph = () => {
         supersedableDelayedAction(1000, Object.keys(visibleNodes), (hashes) => {
             return renderGraph(hashes).then(svg => {
+                decorateGraph(svg, visibleNodes);
                 removeAllChildren(graph);
                 graph.appendChild(svg);
             });
@@ -158,11 +255,7 @@ window.onload = function() {
         results.appendChild(hint);
         for (const hash in nodes) {
             const node = nodes[hash]
-            const words = [ ...node.nodeType.matchAll(/[^_]+/g) ];
-            const type = words.map(match => {
-                return match[0].charAt(0).toUpperCase()
-                     + match[0].slice(1).toLowerCase()
-            }).join("");
+            type = prettyNodeType(node);
             const row = createElement("div", {
                 "padding-bottom": "5px",
                 "user-select": "none",
@@ -177,8 +270,8 @@ window.onload = function() {
                 "whitespace": "nowrap",
                 "overflow": "ellipsis",
             }, row);
+            typeSpan.textContent = type;
             typeSpan.setAttribute("class", "nodeType");
-            typeSpan.textContent = type.replace(" (unshareable)", "");
             const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const regex = new RegExp(pattern.split("%").reduce((fullRegex, piece) => {
                 const pieceRegex = escapeRegExp(piece).replaceAll("_", ".");
@@ -249,10 +342,6 @@ window.onload = function() {
     window.setTimeout(() => patternInput.focus(), 100);
     document.body.appendChild(overlay);
     document.body.appendChild(graph);
-    updateGraph();
-
-//    findNodes("enet")
-//        .then(result => renderGraph(Object.keys(result[1])))
-//        .then(svg => document.body.appendChild(svg));
+    loadTheme().then(() => updateGraph());
 }
 

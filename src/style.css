@@ -1,0 +1,30 @@
+div.resultRow span.nodeType { color: #3f3f3f; }
+
+span.highlight {
+    color: #000000;
+    text-decoration: underline;
+}
+
+div.resultRow {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #7f7f7f;
+}
+
+div.resultRow.visible {
+    background-color: #8ab3c1;
+}
+
+text.nodeType {
+    font-size: 14;
+    font-weight: bold;
+}
+
+text.nodeLabel {
+    font-size: 10;
+}
+
+g.node {
+    fill: #3f3f3f;
+}

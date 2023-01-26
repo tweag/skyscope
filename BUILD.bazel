@@ -9,8 +9,9 @@ haskell_binary(
         ":src/Sqlite.hs",
     ],
     extra_srcs = [
+        ":theme.json",
         ":src/main.js",
-        ":src/theme.css",
+        ":src/style.css",
     ],
     deps = [
         ":base",

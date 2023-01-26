@@ -83,7 +83,7 @@ importGraph db = do
     Right graph -> pure graph
   Sqlite.batchInsert db "node" [ "hash", "type", "data" ] $
     Map.assocs nodes <&> \(NodeHash hash, Node nodeType nodeData) ->
-      SQLText <$> [ hash, nodeType, nodeData ]
+      SQLText <$> [ hash, nodeType, nodeType <> ":" <> nodeData ]
   Sqlite.batchInsert db "edge" [ "source", "target" ] $
     Set.toList edges <&> \(Edge (NodeHash source) (NodeHash target)) ->
       SQLText <$> [ source, target ]
@@ -134,7 +134,7 @@ server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
       mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/main.js"
-      themeCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/theme.css"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -146,13 +146,18 @@ server db = do
         , mainJs
         , "    </script>"
         , "    <style>"
-        , themeCss
-        --, Text.decodeUtf8 $(embedFile "src/theme.css")
+        , styleCss
+        --, Text.decodeUtf8 $(embedFile "src/style.css")
         , "    </style>"
         , "  </head>"
         , "  <body></body>"
         , "</html>"
         ]
+    Web.get "/theme" $ do
+        themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/theme.json"
+        Web.setHeader "Content-Type" "application/json"
+        --Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "theme.json")
+        Web.text $ LazyText.fromStrict themeJson
     Web.post "/find" $ Json.eitherDecode <$> Web.body >>= \case
       Right pattern -> Web.json =<< liftIO (findNodes db 100 pattern)
       Left err -> badRequest err
@@ -212,9 +217,9 @@ renderSvg db hashes = do
   where
     graphvizNode :: NodeHash -> Node -> Text
     graphvizNode nodeHash@(NodeHash hash) (Node nodeType nodeData) =
-      let hidden = nodeHash `notElem` hashes
-          label = nodeType <> "\\n" <> Text.take 32 hash
-          tooltip = nodeType <> ":" <> nodeData <> "\n\n" <>
+      let label = nodeType <> "\\n" <> Text.take 32 hash
+          hidden = nodeHash `notElem` hashes
+          tooltip = nodeData <> "\n\n" <>
             if hidden then "Click this node to show it."
             else "Hold ctrl and click this node to hide it."
       in "    node_" <> hash <> graphvizAttributes
