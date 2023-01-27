@@ -145,11 +145,6 @@ function decorateGraph(svg, Node) {
                 labelElement.textContent = ellipsis + label.slice(-maxChars);
             }
             labelElement.classList.add("nodeLabel");
-            const linkElement = nodeElement.getElementsByTagName("a")[0];
-            const tooltip = linkElement.getAttribute("xlink:title");
-            const setHint = hint => linkElement.setAttribute("xlink:title",
-                tooltip.replace(/\n\nClick.*/, "\n\n" + hint)
-            );
             nodeElement.addEventListener("click", e => {
                 if (e.ctrlKey) {
                     Node.hide(hash);
@@ -171,7 +166,15 @@ function decorateGraph(svg, Node) {
             ellipseElements[0].classList.add("node");
             nodeElement.addEventListener("click", e => Node.show(hash));
         }
+        const linkElements = nodeElement.getElementsByTagName("a");
+        if (linkElements.length == 1) {
+            const tooltip = linkElements[0].getAttribute("xlink:title");
+            nodeElement.setHint = hint => linkElements[0].setAttribute("xlink:title",
+                tooltip.replace(/\n\n.*/, "\n\n" + hint)
+            );
+        }
     }
+    Node.updateTooltips(false);
 }
 
 const actionStates = {};
@@ -245,6 +248,28 @@ window.onload = function() {
     Node.selected = hash => {
         return selection[hash];
     }
+    Node.updateTooltips = selecting => {
+        for (const nodeElement of graph.getElementsByClassName("node")) {
+            const nodeClasses = nodeElement.classList;
+            if (selecting) {
+                if (nodeElement.setHint) {
+                    nodeElement.setHint(Node.selected(nodeElement.id) ?
+                        "Click to remove this node from the selection." :
+                        "Click to add this node to the selection."
+                    );
+                }
+            } else {
+                if (nodeElement.setHint) {
+                    nodeElement.setHint(nodeClasses.contains("Collapsed") ?
+                        "Click to expand this node and see all its edges. " +
+                        "Hold CTRL and click to hide it." :
+                        "Click to collapse this node and hide its edges. " +
+                        "Hold CTRL and click to hide it."
+                    );
+                }
+            }
+        }
+    };
     const updateSelection = allow => {
         for (const nodeElement of graph.getElementsByClassName("node")) {
             const nodeClasses = nodeElement.classList;
@@ -259,6 +284,7 @@ window.onload = function() {
             } else {
                 nodeClasses.remove("selected", "unselected");
             }
+            Node.updateTooltips(allow);
         }
     };
     const commitSelection = () => {
@@ -309,7 +335,8 @@ window.onload = function() {
         "padding": "5px 10px",
         "border-radius": "5px",
         "text-overflow": "ellipsis",
-        "min-width": "500px",
+        //"min-width": "500px",
+        "min-width": "1024px",
     }, searchBar);
     patternInput.setAttribute("title", "The search pattern is a matched against SkyValues using SQLite LIKE.");
     patternInput.setAttribute("placeholder", "Enter a search pattern here to find and display nodes "

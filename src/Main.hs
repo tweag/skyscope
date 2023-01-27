@@ -239,13 +239,17 @@ renderSvg db hashes = do
             Nothing -> Hidden
       in "    node_" <> hash <> graphvizAttributes
               [ ("class", Text.pack $ show nodeState)
-              , ("tooltip", nodeData <> "\n\nClick here to ...")
               , ("width", if nodeState == Hidden then "0.1" else "3.0")
               , ("height", if nodeState == Hidden then "0.1" else "0.6")
               , ("shape", if nodeState == Hidden then "point" else "box")
               , ("fixedsize", "true")
               , ("label", label)
               , ("id", hash)
+              , ("tooltip", nodeData <> "\n\n" <> case nodeState of
+                  Expanded -> "Click to collapse this node and hide its edges. Hold CTRL and click to hide it entirely."
+                  Collapsed -> "Click to expand this node and show its edges. Hold CTRL and click to hide it."
+                  Hidden -> "Click to show this node."
+                )
               ]
     graphvizEdge :: Edge -> Text
     graphvizEdge (Edge (NodeHash source) (NodeHash target)) =
