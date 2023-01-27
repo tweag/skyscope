@@ -1,3 +1,12 @@
+div.searchBox {
+    background-color: #e7ecee;
+    border-radius: 20px;
+    opacity: 90%;
+    padding: 30px;
+    overflow: hidden;
+    min-width: 800px;
+}
+
 div.resultRow span.nodeType { color: #3f3f3f; }
 
 span.highlight {
@@ -12,8 +21,16 @@ div.resultRow {
     color: #7f7f7f;
 }
 
+div.resultRow.unselected:hover {
+    background-color: #e5fffd;
+}
+
+div.resultRow.selected:hover {
+    background-color: #e5fffd;
+}
+
 div.resultRow.selected {
-    background-color: #8ab3c1;
+    background-color: hsla(199, 21%, 82%, 1);
 }
 
 text.nodeType {
@@ -59,4 +76,3 @@ g.node.unselected path {
     stroke: #3f3f3f;
     fill: #ffffff;
 }
-

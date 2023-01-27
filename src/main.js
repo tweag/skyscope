@@ -69,10 +69,10 @@ function prettyNodeType(nodeType) {
 function prettyNodeLabel(hash, type, nodeData) {
     var match = null;
     switch (type) {
-        case "File":
-        case "FileState":
         case "DirectoryListing":
         case "DirectoryListingState":
+        case "File":
+        case "FileState":
         case "WorkspaceFile":
             match = nodeData.match(/.*\[([^\]]*)\]\/\[([^\]]*)\]/);
             if (match != null) {
@@ -94,10 +94,13 @@ function prettyNodeLabel(hash, type, nodeData) {
             }
             break;
         case "BzlLoad":
+        case "ClientEnvironmentVariable":
+        case "ContainingPackageLookup":
+        case "IgnoredPackagePrefixes":
         case "Package":
         case "PackageLookup":
+        case "Precomputed":
         case "RepositoryDirectory":
-        case "ClientEnvironmentVariable":
             match = nodeData.match(/:(.*)/);
             if (match != null) {
                 return match[1];
@@ -289,22 +292,17 @@ window.onload = function() {
         "left": "0",
         "top": "0",
     });
-    const container = createElement("div", {}, overlay);
+    const searchBox = createElement("div", {}, overlay);
+    searchBox.classList.add("searchBox");
     const setContainerMargin = margin => {
-        setStyle(container, {
-            "background-color": "#ccd7db",
-            "border-radius": "20px",
-            "opacity": "95%",
+        setStyle(searchBox, {
             "margin": margin,
-            "padding": "30px",
-            "overflow": "hidden",
-            "min-width": "800px",
         });
     };
-    const searchBox = createElement("div", {
+    const searchBar = createElement("div", {
         "align-items": "center",
         "display": "flex",
-    }, container);
+    }, searchBox);
     const patternInput = createElement("input", {
         "flex-grow": 1,
         "font-size": "18px",
@@ -312,7 +310,7 @@ window.onload = function() {
         "border-radius": "5px",
         "text-overflow": "ellipsis",
         "min-width": "500px",
-    }, searchBox);
+    }, searchBar);
     patternInput.setAttribute("title", "The search pattern is a matched against SkyValues using SQLite LIKE.");
     patternInput.setAttribute("placeholder", "Enter a search pattern here to find and display nodes "
                                            + "in the Skyframe graph (you may use % as a wildcard)");
@@ -322,7 +320,7 @@ window.onload = function() {
         "padding-left": "20px",
         "user-select": "none",
         "color": "#4f4f4f",
-    }, searchBox);
+    }, searchBar);
     const updateNodeCount = total => {
         nodeCount.textContent = total.toLocaleString() + " nodes";
     };
@@ -336,7 +334,7 @@ window.onload = function() {
         "text-align": "right",
         "user-select": "none",
     });
-    const results = createElement("div", {}, container);
+    const results = createElement("div", {}, searchBox);
     const addHint = content => {
         hint.textContent = content;
         results.appendChild(hint);
@@ -349,15 +347,14 @@ window.onload = function() {
             const node = nodes[hash]
             type = prettyNodeType(node.nodeType);
             const row = createElement("div", {
-                "padding-bottom": "5px",
+                "margin-bottom": "1px",
                 "user-select": "none",
                 "cursor": "pointer",
+                "padding": "2px 10px",
             }, results);
             row.title = node.nodeData;
             row.classList.add("resultRow", type);
-            if (!Node.hidden(hash)) {
-                row.classList.add("selected");
-            }
+            row.classList.add(Node.hidden(hash) ? "unselected" : "selected");
             const typeSpan = createElement("span", {
                 "font-weight": "bold",
                 "margin-right": "10px",

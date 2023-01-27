@@ -255,8 +255,3 @@ renderSvg db hashes = do
     graphvizAttributes attrs =
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
-
-
-{- nodeData <> "\n\n" <>
-            if hidden then "Click this node to show it."
-            else "Hold ctrl and click this node to hide it." -}
