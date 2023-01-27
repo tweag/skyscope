@@ -97,6 +97,7 @@ function prettyNodeLabel(hash, type, nodeData) {
         case "Package":
         case "PackageLookup":
         case "RepositoryDirectory":
+        case "ClientEnvironmentVariable":
             match = nodeData.match(/:(.*)/);
             if (match != null) {
                 return match[1];
@@ -224,12 +225,6 @@ window.onload = function() {
         hidden: hash => {
             return !(hash in nodeStates);
         },
-        select: hash => {
-            selection[hash] = true;
-        },
-        unselect: hash => {
-            delete section[hash];
-        },
     };
     const graph = createElement("div", {
         "text-align": "center",
@@ -243,6 +238,46 @@ window.onload = function() {
                 graph.appendChild(svg);
             });
         });
+    };
+    Node.selected = hash => {
+        return selection[hash];
+    }
+    const updateSelection = allow => {
+        for (const nodeElement of graph.getElementsByClassName("node")) {
+            const nodeClasses = nodeElement.classList;
+            if (allow) {
+                if (Node.selected(nodeElement.id)) {
+                    nodeClasses.remove("unselected");
+                    nodeClasses.add("selected");
+                } else {
+                    nodeClasses.remove("selected");
+                    nodeClasses.add("unselected");
+                }
+            } else {
+                nodeClasses.remove("selected", "unselected");
+            }
+        }
+    };
+    const commitSelection = () => {
+        if (Object.keys(selection).length > 0) {
+            Object.keys(nodeStates).forEach(hash => {
+                delete nodeStates[hash];
+            });
+            Object.keys(selection).forEach(hash => {
+                nodeStates[hash] = false;
+                delete selection[hash];
+            });
+        }
+        updateSelection(false);
+        updateGraph(Node);
+    };
+    Node.select = hash => {
+        selection[hash] = true;
+        updateSelection(true);
+    };
+    Node.unselect = hash => {
+        delete selection[hash];
+        updateSelection(true);
     };
     const overlay = createElement("div", {
         "justify-content": "center",
@@ -395,12 +430,14 @@ window.onload = function() {
     document.addEventListener("keydown", e => {
         switch (e.key) {
             case "Shift":
+                updateSelection(true);
                 break;
         }
     });
     document.addEventListener("keyup", e => {
         switch (e.key) {
             case "Shift":
+                commitSelection();
                 break;
             case "Escape":
                 collapseSearch();

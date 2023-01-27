@@ -40,3 +40,23 @@ g.node.Collapsed path {
     fill: #ffffff;
     stroke: #ffffff;
 }
+
+g.node.selected:hover path {
+    fill: #e5fffd;
+}
+
+g.node.selected path {
+    stroke: #3f3f3f;
+    fill: #efefef;
+}
+
+g.node.unselected:hover path {
+    fill: #e5fffd;
+}
+
+g.node.unselected path {
+    stroke-dasharray: 5 2;
+    stroke: #3f3f3f;
+    fill: #ffffff;
+}
+

@@ -13,5 +13,6 @@
     "ContainingPackageLookup":   { "h": 117, "s": 55, "l": 29 },
     "Artifact":                  { "h":  71, "s": 55, "l": 29 },
     "ArtifactNestedSet":         { "h":  71, "s": 55, "l": 29 },
-    "ActionExecution":           { "h": 318, "s": 55, "l": 29 }
+    "ActionExecution":           { "h": 318, "s": 55, "l": 29 },
+    "ClientEnvironmentVariable": { "h": 163, "s": 55, "l": 29 }
 }

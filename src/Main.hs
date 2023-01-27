@@ -10,7 +10,7 @@
 
 module Main where
 
-import Control.Monad (guard, join)
+import Control.Monad (join)
 import Control.Monad.IO.Class (liftIO)
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (FromJSON, FromJSONKey, FromJSONKeyFunction(..), ToJSON, ToJSONKey)
@@ -136,8 +136,8 @@ server :: Sqlite.Database -> IO ()
 server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/src/main.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/src/style.css"
+      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/main.js"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -165,7 +165,7 @@ server db = do
         Web.text =<< liftIO (renderSvg db visibleNodes)
       Left err -> badRequest err
     Web.get "/theme" $ do
-        themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/theme.json"
+        themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/theme.json"
         Web.setHeader "Content-Type" "application/json"
         --Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "theme.json")
         Web.text $ LazyText.fromStrict themeJson
