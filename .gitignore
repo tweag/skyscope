@@ -1,3 +1,6 @@
 .*.sw?
 .sw?
+/.spago
 /bazel-*
+/index.js
+/output
