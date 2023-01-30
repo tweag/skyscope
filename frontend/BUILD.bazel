@@ -1,0 +1,23 @@
+exports_files( [
+    "theme.json",
+    "src/main.js",
+    "src/style.css",
+])
+
+genrule(
+    name = "bundle",
+    srcs = glob(["src/**/*.purs"]) + [
+        ":packages.dhall",
+        ":spago.dhall",
+    ],
+    outs = ["index.js"],
+    tools = ["@spago//:bin/spago"],
+    cmd = """
+        INDEX_JS="$$(realpath $@)"
+        SPAGO="$$(realpath "$(execpath @spago//:bin/spago)")"
+        mkdir -p "$$(dirname "$$INDEX_JS")"
+        cd frontend
+        "$$SPAGO" -c skip bundle-app -t "$$INDEX_JS"
+    """,
+    visibility = ["//visibility:public"],
+)

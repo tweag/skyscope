@@ -1,0 +1,39 @@
+load("@rules_haskell//haskell:defs.bzl", "haskell_toolchain_library", "haskell_binary")
+
+haskell_toolchain_library(name = "base")
+
+haskell_binary(
+    name = "skyscope",
+    srcs = [
+        ":src/Main.hs",
+        ":src/Sqlite.hs",
+    ],
+    extra_srcs = [
+        "//frontend:index.js",
+        "//frontend:theme.json",
+        "//frontend:src/main.js",
+        "//frontend:src/style.css",
+    ],
+    deps = [
+        ":base",
+        "@stackage//:aeson",
+        "@stackage//:attoparsec",
+        "@stackage//:bytestring",
+        "@stackage//:containers",
+        "@stackage//:cryptohash-sha256",
+        "@stackage//:direct-sqlite",
+        "@stackage//:directory",
+        "@stackage//:file-embed",
+        "@stackage//:filemanip",
+        "@stackage//:http-types",
+        "@stackage//:process",
+        "@stackage//:process-extras",
+        "@stackage//:scotty",
+        "@stackage//:stm",
+        "@stackage//:template-haskell",
+        "@stackage//:text",
+        "@stackage//:time",
+        "@stackage//:unix",
+        "@stackage//:zlib",
+    ],
+)

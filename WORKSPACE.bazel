@@ -28,11 +28,13 @@ stack_snapshot(
         "direct-sqlite",
         "directory",
         "file-embed",
+        "filemanip",
         "http-types",
         "process",
         "process-extras",
         "scotty",
         "stm",
+        "template-haskell",
         "text",
         "time",
         "unix",
@@ -40,26 +42,26 @@ stack_snapshot(
     ],
 )
 
-load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_local_repository")
+load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
 
-nixpkgs_local_repository(
-    name = "nixpkgs",
-    nix_file = "//:nixpkgs.nix",
-    nix_file_deps = ["//:nixpkgs.json"],
+nixpkgs_git_repository(
+    name = "nixpkgs_21.11",
+    revision = "21.11",
+    sha256 = "c77bb41cf5dd82f4718fa789d49363f512bb6fa6bc25f8d60902fe2d698ed7cc",
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
-nixpkgs_cc_configure(repository = "@nixpkgs")
+nixpkgs_cc_configure(repository = "@nixpkgs_21.11")
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
 
-nixpkgs_python_configure(repository = "@nixpkgs")
+nixpkgs_python_configure(repository = "@nixpkgs_21.11")
 
 load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
 
 haskell_register_ghc_nixpkgs(
-    repository = "@nixpkgs",
+    repository = "@nixpkgs_21.11",
     attribute_path = "ghc",
     version = "8.10.7",
 )
@@ -69,11 +71,28 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
 nixpkgs_package(
     name = "nixpkgs_zlib",
     attribute_path = "zlib",
-    repository = "@nixpkgs",
+    repository = "@nixpkgs_21.11",
 )
 
 nixpkgs_package(
     name = "zlib.dev",
-    build_file = "//:zlib.BUILD.bazel",
+    build_file = "//backend:zlib.BUILD.bazel",
+    repository = "@nixpkgs_21.11",
+)
+
+
+
+load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_local_repository")
+
+nixpkgs_local_repository(
+    name = "nixpkgs",
+    nix_file = "//:nixpkgs.nix",
+    nix_file_deps = ["//:nixpkgs.json"],
+)
+
+nixpkgs_package(
+    name = "spago",
+    build_file_content = "exports_files([\"bin/spago\"])",
     repository = "@nixpkgs",
 )
+

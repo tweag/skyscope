@@ -24,12 +24,13 @@ import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Coerce (coerce)
-import Data.FileEmbed (embedFile)
+import Data.FileEmbed (embedFile, embedFileIfExists)
 import Data.Functor ((<&>))
 import Data.Int (Int64)
 import Data.List (nub)
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -40,11 +41,13 @@ import qualified Data.Text.Lazy as LazyText
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData(..))
 import GHC.Generics (Generic)
+import qualified Language.Haskell.TH as TH
 import Network.HTTP.Types.Status (badRequest400)
 import Prelude
 import qualified Sqlite
 import System.Directory (getCurrentDirectory)
 import System.Exit (ExitCode(..))
+import System.FilePath.Find ((~~?), filePath, find)
 import System.Posix.Temp (mkdtemp)
 import System.Process.Text (readProcessWithExitCode)
 import qualified Web.Scotty as Web
@@ -136,8 +139,8 @@ server :: Sqlite.Database -> IO ()
 server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/main.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/src/style.css"
+      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/main.js"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -145,12 +148,12 @@ server db = do
         , "    <title>Skyscope</title>"
         , "    <meta charset=\"UTF-8\">"
         , "    <script>"
-        --, Text.decodeUtf8 $(embedFile "src/main.js")
-        , mainJs
+        ,       Text.decodeUtf8 $(embedFile "frontend/src/main.js")
+        --,       mainJs
         , "    </script>"
         , "    <style>"
-        , styleCss
-        --, Text.decodeUtf8 $(embedFile "src/style.css")
+        --,       styleCss
+        ,       Text.decodeUtf8 $(embedFile "frontend/src/style.css")
         , "    </style>"
         , "  </head>"
         , "  <body></body>"
@@ -165,10 +168,30 @@ server db = do
         Web.text =<< liftIO (renderSvg db visibleNodes)
       Left err -> badRequest err
     Web.get "/theme" $ do
-        themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/theme.json"
         Web.setHeader "Content-Type" "application/json"
-        --Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "theme.json")
-        Web.text $ LazyText.fromStrict themeJson
+        --themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/theme.json"
+        --Web.text $ LazyText.fromStrict themeJson
+        Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "frontend/theme.json")
+    Web.get "/purescript" $ do
+      indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
+      Web.html $ LazyText.fromStrict $ Text.unlines
+        [ "<html>"
+        , "  <head>"
+        , "    <title>Skyscope</title>"
+        , "    <meta charset=\"UTF-8\">"
+        , "    <script>"
+        ,       indexJs
+        --,       Text.decodeUtf8 $ fromMaybe "" $(embedFileIfExists $(do
+        --          found <- TH.runIO (find (pure True) (filePath ~~? "**/frontend/index.js") ".")
+        --          pure $ TH.LitE $ TH.StringL $ case found of
+        --            [ path ] -> path
+        --            [] -> ""
+        --        ))
+        , "    </script>"
+        , "  </head>"
+        , "  <body></body>"
+        , "</html>"
+        ]
   where
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
     favicon = "<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 "

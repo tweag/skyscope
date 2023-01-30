@@ -1,6 +1,6 @@
 #!/bin/bash
-nix-shell --packages bazel_5 ghcid --run '
+nix-shell --run '
     LC_ALL=C.UTF-8 ghcid --allow-eval --command "
-        bazel run //:skyscope@repl
+        bazel run //backend:skyscope@repl
     "
 '

@@ -1,5 +1,5 @@
-{ name = "my-project"
+{ name = "skyscope-frontend"
 , dependencies = [ "console", "effect", "prelude" ]
 , packages = ./packages.dhall
-, sources = [ "src/**/*.purs", "test/**/*.purs" ]
+, sources = [ "src/**/*.purs" ]
 }
