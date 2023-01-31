@@ -4,6 +4,7 @@
   , "effect"
   , "maybe"
   , "prelude"
+  , "unsafe-coerce"
   , "web-dom"
   , "web-events"
   , "web-html"

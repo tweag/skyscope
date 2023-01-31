@@ -174,6 +174,7 @@ server db = do
         Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "frontend/theme.json")
     Web.get "/purescript" $ do
       indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -188,6 +189,9 @@ server db = do
         --            [] -> ""
         --        ))
         , "    </script>"
+        , "    <style>"
+        ,       styleCss
+        , "    </style>"
         , "  </head>"
         , "  <body></body>"
         , "</html>"

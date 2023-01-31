@@ -77,3 +77,42 @@ g.node.unselected path {
     fill: #ffffff;
 }
 
+
+
+
+
+
+div#SearchBoxOverlay {
+    display: flex;
+    height: auto;
+    justify-content: center;
+    left: 0;
+    max-height: 100%;
+    position: fixed;
+    top: 0;
+    width: 100%;
+}
+
+div#SearchBox {
+    background-color: #e7ecee;
+    border-radius: 20px;
+    margin: 30px 30px;
+    min-width: 800px;
+    opacity: 90%;
+    overflow: hidden;
+    padding: 30px;
+}
+
+div#SearchBar {
+    align-items: center;
+    display: flex;
+}
+
+input#PatternInput {
+    border-radius: 5px;
+    flex-grow: 1;
+    font-size: 18px;
+    min-width: 1024px;
+    padding: 5px 10px;
+    text-overflow: ellipsis;
+}
