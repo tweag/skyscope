@@ -182,7 +182,7 @@ server db = do
         , "    <script>"
         ,       indexJs
         --,       Text.decodeUtf8 $ fromMaybe "" $(embedFileIfExists $(do
-        --          found <- TH.runIO (find (pure True) (filePath ~~? "**/frontend/index.js") ".")
+        --          found <- TH.runIO $ find (pure True) (filePath ~~? "**/frontend/index.js") "."
         --          pure $ TH.LitE $ TH.StringL $ case found of
         --            [ path ] -> path
         --            [] -> ""
