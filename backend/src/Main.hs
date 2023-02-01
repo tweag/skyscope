@@ -162,7 +162,7 @@ server db = do
         ]
     Web.post "/find" $ Json.eitherDecode <$> Web.body >>= \case
       Right pattern -> do
-        liftIO $ threadDelay 2000000
+        liftIO $ threadDelay 5000000
         Web.json =<< liftIO (findNodes db 100 pattern)
       Left err -> badRequest err
     Web.post "/render" $ Json.eitherDecode <$> Web.body >>= \case
@@ -224,6 +224,8 @@ data NodeState
   | Hidden
   deriving (Eq, Show)
 
+
+-- TODO: Change to `Map NodeHash NodeState`
 renderSvg :: Sqlite.Database -> Map NodeHash Bool -> IO LazyText.Text
 renderSvg db hashes = do
   edges <- fmap (nub . concat) $ flip Map.traverseWithKey hashes $
@@ -290,3 +292,14 @@ renderSvg db hashes = do
     graphvizAttributes attrs =
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
+
+
+
+{-
+
+      CallStack (from HasCallStack):
+        error, called at backend/src/Main.hs:261:35 in main:Main
+      dot exit 1: Error: <stdin>: syntax error in line 130 scanning a quoted string (missing endquote? longer than 16384?)
+
+
+-}

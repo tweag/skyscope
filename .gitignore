@@ -2,5 +2,8 @@
 .sw?
 /.spago
 /bazel-*
+/frontend/.spago
+/frontend/index.js
+/frontend/output
 /index.js
 /output
