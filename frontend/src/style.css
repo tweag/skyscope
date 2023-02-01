@@ -116,3 +116,11 @@ input#PatternInput {
     padding: 5px 10px;
     text-overflow: ellipsis;
 }
+
+span#NodeCount {
+    font-size: 18px;
+    font-style: italic;
+    padding-left: 20px;
+    user-select: none;
+    color: #4f4f4f;
+}

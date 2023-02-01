@@ -10,6 +10,7 @@
 
 module Main where
 
+import Control.Concurrent (threadDelay)
 import Control.Monad (join)
 import Control.Monad.IO.Class (liftIO)
 import qualified Crypto.Hash.SHA256 as SHA256
@@ -160,7 +161,9 @@ server db = do
         , "</html>"
         ]
     Web.post "/find" $ Json.eitherDecode <$> Web.body >>= \case
-      Right pattern -> Web.json =<< liftIO (findNodes db 100 pattern)
+      Right pattern -> do
+        liftIO $ threadDelay 2000000
+        Web.json =<< liftIO (findNodes db 100 pattern)
       Left err -> badRequest err
     Web.post "/render" $ Json.eitherDecode <$> Web.body >>= \case
       Right visibleNodes -> do
@@ -173,7 +176,8 @@ server db = do
         --Web.text $ LazyText.fromStrict themeJson
         Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "frontend/theme.json")
     Web.get "/purescript" $ do
-      indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
+      --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
+      indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/index.js"
       styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
