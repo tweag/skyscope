@@ -140,8 +140,8 @@ server :: Sqlite.Database -> IO ()
 server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/main.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/style.css"
+      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/src/main.js"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -162,7 +162,7 @@ server db = do
         ]
     Web.post "/find" $ Json.eitherDecode <$> Web.body >>= \case
       Right pattern -> do
-        liftIO $ threadDelay 5000000
+        --liftIO $ threadDelay 5000000
         Web.json =<< liftIO (findNodes db 100 pattern)
       Left err -> badRequest err
     Web.post "/render" $ Json.eitherDecode <$> Web.body >>= \case
@@ -172,13 +172,13 @@ server db = do
       Left err -> badRequest err
     Web.get "/theme" $ do
         Web.setHeader "Content-Type" "application/json"
-        --themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/theme.json"
+        --themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/theme.json"
         --Web.text $ LazyText.fromStrict themeJson
         Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "frontend/theme.json")
     Web.get "/purescript" $ do
-      --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
-      indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/index.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/style.css"
+      --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/bazel-bin/frontend/index.js"
+      indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/index.js"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"

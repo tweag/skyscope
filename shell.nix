@@ -3,5 +3,6 @@ with import ./nixpkgs.nix {
   overlays = [ ];
 };
 mkShell {
-  nativeBuildInputs = [ bazel_5 entr esbuild ghcid graphviz purescript spago ];
+  nativeBuildInputs =
+    [ bazel_5 entr esbuild ghcid graphviz nodejs purescript spago ];
 }
