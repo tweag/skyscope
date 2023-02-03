@@ -53,6 +53,14 @@ import System.Posix.Temp (mkdtemp)
 import System.Process.Text (readProcessWithExitCode)
 import qualified Web.Scotty as Web
 
+main :: IO ()
+main = do
+  dir <- mkdtemp "skyscope"
+  let path = dir <> "/database"
+  absolutePath <- getCurrentDirectory <&> (<> ("/" <> path))
+  putStrLn $ "\x1b[1;33mdatabase: " <> absolutePath <> "\x1b[0m"
+  Sqlite.withDatabase path $ \db -> importGraph db *> server db
+
 data Node = Node
   { nodeType :: Text
   , nodeData :: Text
@@ -73,14 +81,6 @@ data Edge = Edge
   } deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
 type Graph = (Map NodeHash Node, Set Edge)
-
-main :: IO ()
-main = do
-  dir <- mkdtemp "skyscope"
-  let path = dir <> "/database"
-  absolutePath <- getCurrentDirectory <&> (<> ("/" <> path))
-  putStrLn $ "\x1b[1;33mdatabase: " <> absolutePath <> "\x1b[0m"
-  Sqlite.withDatabase path $ \db -> importGraph db *> server db
 
 importGraph :: Sqlite.Database -> IO ()
 importGraph db = do
@@ -140,8 +140,8 @@ server :: Sqlite.Database -> IO ()
 server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/src/main.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/src/style.css"
+      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/main.js"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -170,15 +170,15 @@ server db = do
         Web.setHeader "Content-Type" "image/svg+xml"
         Web.text =<< liftIO (renderSvg db visibleNodes)
       Left err -> badRequest err
-    Web.get "/theme" $ do
+    Web.get "/theme" $ do  -- TODO: Change endpoint name to /colours
         Web.setHeader "Content-Type" "application/json"
-        --themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/theme.json"
+        --themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/theme.json"
         --Web.text $ LazyText.fromStrict themeJson
         Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "frontend/theme.json")
     Web.get "/purescript" $ do
-      --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/bazel-bin/frontend/index.js"
-      indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/index.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/skyscope/frontend/src/style.css"
+      --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
+      indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/index.js"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/style.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"

@@ -4,7 +4,7 @@ div.searchBox {
     opacity: 90%;
     padding: 30px;
     overflow: hidden;
-    min-width: 800px;
+    min-width: 600px;
 }
 
 div.resultRow span.nodeType { color: #3f3f3f; }
@@ -97,7 +97,6 @@ div#SearchBox {
     background-color: #e7ecee;
     border-radius: 20px;
     margin: 30px 30px;
-    min-width: 800px;
     opacity: 90%;
     overflow: hidden;
     padding: 30px;
@@ -106,21 +105,60 @@ div#SearchBox {
 div#SearchBar {
     align-items: center;
     display: flex;
+    margin-bottom: 10px;
 }
 
 input#PatternInput {
     border-radius: 5px;
     flex-grow: 1;
     font-size: 18px;
-    min-width: 1024px;
+    min-width: 600px;
     padding: 5px 10px;
+    text-align: center;
     text-overflow: ellipsis;
 }
 
 span#NodeCount {
+    color: #4f4f4f;
     font-size: 18px;
     font-style: italic;
     padding-left: 20px;
     user-select: none;
-    color: #4f4f4f;
 }
+
+div.ResultRow {
+    cursor: pointer;
+    margin-bottom: 1px;
+    padding: 2px 10px;
+    user-select: none;
+}
+
+div.ResultRow > span.NodeType {
+    font-weight: bold;
+    margin-right: 10px;
+    overflow: ellipsis;
+    white-space: nowrap;
+}
+
+div.ResultRow > span.Highlight {
+    color: #000000;
+    text-decoration: underline;
+}
+
+div.ResultRow                           span.NodeType, g                           text.NodeType { color: hsl(  0,  0%, 25%); }
+div.ResultRow.ActionExecution           span.NodeType, g.ActionExecution           text.NodeType { color: hsl(318, 55%, 29%); }
+div.ResultRow.Artifact                  span.NodeType, g.Artifact                  text.NodeType { color: hsl( 71, 55%, 29%); }
+div.ResultRow.ArtifactNestedSet         span.NodeType, g.ArtifactNestedSet         text.NodeType { color: hsl( 71, 55%, 29%); }
+div.ResultRow.ClientEnvironmentVariable span.NodeType, g.ClientEnvironmentVariable text.NodeType { color: hsl(163, 55%, 29%); }
+div.ResultRow.ConfiguredTarget          span.NodeType, g.ConfiguredTarget          text.NodeType { color: hsl(117, 55%, 29%); }
+div.ResultRow.ContainingPackageLookup   span.NodeType, g.ContainingPackageLookup   text.NodeType { color: hsl(117, 55%, 29%); }
+div.ResultRow.DirectoryListing          span.NodeType, g.DirectoryListing          text.NodeType { color: hsl(271, 55%, 29%); }
+div.ResultRow.DirectoryListingState     span.NodeType, g.DirectoryListingState     text.NodeType { color: hsl(271, 55%, 29%); }
+div.ResultRow.File                      span.NodeType, g.File                      text.NodeType { color: hsl(271, 55%, 29%); }
+div.ResultRow.FileState                 span.NodeType, g.FileState                 text.NodeType { color: hsl(271, 55%, 29%); }
+div.ResultRow.Glob                      span.NodeType, g.Glob                      text.NodeType { color: hsl(233, 55%, 29%); }
+div.ResultRow.PackageLookup             span.NodeType, g.PackageLookup             text.NodeType { color: hsl(117, 55%, 29%); }
+div.ResultRow.SingleToolchainResolution span.NodeType, g.SingleToolchainResolution text.NodeType { color: hsl(  7, 55%, 29%); }
+div.ResultRow.SingleToolchainResolution span.NodeType, g.SingleToolchainResolution text.NodeType { color: hsl(  7, 55%, 29%); }
+div.ResultRow.TargetCompletion          span.NodeType, g.TargetCompletion          text.NodeType { color: hsl(198, 55%, 29%); }
+div.ResultRow.ToolchainResolution       span.NodeType, g.ToolchainResolution       text.NodeType { color: hsl(  7, 55%, 29%); }

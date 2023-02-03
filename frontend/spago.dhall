@@ -20,11 +20,13 @@
   , "prelude"
   , "record"
   , "refs"
+  , "strings"
   , "tuples"
   , "typelevel-prelude"
   , "unsafe-coerce"
   , "web-dom"
   , "web-events"
+  , "web-uievents"
   , "web-html"
   ]
 , packages = ./packages.dhall
