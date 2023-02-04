@@ -1,7 +1,6 @@
 exports_files( [
-    "theme.json",
     "src/main.js",
-    "src/style.css",
+    "src/theme.css",
 ])
 
 genrule(

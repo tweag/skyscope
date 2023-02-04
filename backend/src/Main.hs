@@ -147,7 +147,7 @@ server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
       mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/main.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/style.css"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/theme.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -160,7 +160,7 @@ server db = do
         , "    </script>"
         , "    <style>"
         --,       styleCss
-        ,       Text.decodeUtf8 $(embedFile "frontend/src/style.css")
+        ,       Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
         , "    </style>"
         , "  </head>"
         , "  <body></body>"
@@ -182,15 +182,10 @@ server db = do
         Web.setHeader "Content-Type" "image/svg+xml"
         Web.text =<< liftIO (renderSvgPurescript db visibleNodes)
       Left err -> badRequest err
-    Web.get "/theme" $ do  -- TODO: Change endpoint name to /colours
-        Web.setHeader "Content-Type" "application/json"
-        --themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/theme.json"
-        --Web.text $ LazyText.fromStrict themeJson
-        Web.text $ LazyText.fromStrict $ Text.decodeUtf8 $(embedFile "frontend/theme.json")
     Web.get "/purescript" $ do
       --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
       indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/index.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/style.css"
+      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/theme.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<html>"
         , "  <head>"
@@ -274,13 +269,13 @@ renderSvgPurescript db nodeStates = do
           nodeState = Map.lookup nodeHash nodeStates
           hidden = nodeState == Nothing
       in "    node_" <> hash <> graphvizAttributes
-              [ ("class", Text.pack $ show nodeState)
-              , ("width", if hidden then "0.1" else "3.0")
+              [ ("width", if hidden then "0.1" else "3.0")
               , ("height", if hidden then "0.1" else "0.6")
               , ("shape", if hidden then "point" else "box")
               , ("fixedsize", "true")
               , ("label", label)
               , ("id", hash)
+              , ("class", Text.pack $ fromMaybe "" $ show <$> nodeState)
               , ("tooltip", nodeData <> "\n\n" <> case nodeState of
                   Just Expanded -> "Click to collapse this node and hide its edges. Hold CTRL and click to hide it entirely."
                   Just Collapsed -> "Click to expand this node and show its edges. Hold CTRL and click to hide it."

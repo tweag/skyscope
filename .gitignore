@@ -2,6 +2,7 @@
 .sw?
 /.spago
 /bazel-*
+/frontend/.psci_modules/
 /frontend/.spago
 /frontend/index.js
 /frontend/output
