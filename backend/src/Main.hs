@@ -75,6 +75,12 @@ instance FromJSONKey NodeHash where
 instance ToJSONKey NodeHash where
   toJSONKey = toJSONKeyText coerce
 
+data NodeState
+  = Collapsed
+  | Expanded
+  | Hidden  -- TODO: Delete after Purescript refactor is complete
+  deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
+
 data Edge = Edge
   { edgeSource :: NodeHash
   , edgeTarget :: NodeHash
@@ -170,6 +176,12 @@ server db = do
         Web.setHeader "Content-Type" "image/svg+xml"
         Web.text =<< liftIO (renderSvg db visibleNodes)
       Left err -> badRequest err
+    Web.post "/render_purescript" $ Json.eitherDecode <$> Web.body >>= \case
+      Right visibleNodes -> do
+        --liftIO $ threadDelay 5000000
+        Web.setHeader "Content-Type" "image/svg+xml"
+        Web.text =<< liftIO (renderSvgPurescript db visibleNodes)
+      Left err -> badRequest err
     Web.get "/theme" $ do  -- TODO: Change endpoint name to /colours
         Web.setHeader "Content-Type" "application/json"
         --themeJson <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/theme.json"
@@ -218,12 +230,71 @@ findNodes db limit pattern = do
     [ SQLText hash, SQLText nodeType, SQLText nodeData ] ->
       (NodeHash hash, Node nodeType nodeData)
 
-data NodeState
-  = Collapsed
-  | Expanded
-  | Hidden
-  deriving (Eq, Show)
-
+renderSvgPurescript :: Sqlite.Database -> Map NodeHash NodeState -> IO LazyText.Text
+renderSvgPurescript db nodeStates = do
+  edges <- fmap (nub . concat) $ flip Map.traverseWithKey nodeStates $
+    \(NodeHash hash) state -> Sqlite.executeSql db
+      [ "SELECT source, target FROM edge WHERE source = ?1 OR target = ?1;" ]
+      [ SQLText hash ] <&> (>>= (\[ SQLText s, SQLText t ] ->
+        let source = NodeHash s
+            target = NodeHash t
+            collapsed = state == Collapsed
+            hidden  = (`Map.notMember` nodeStates)
+        in if collapsed && (hidden source || hidden target)
+            then [] else [ Edge (NodeHash s) (NodeHash t) ]))
+  let nodeIdentityMap = Map.fromList $ map (join (,)) $ Map.keys nodeStates <>
+        (edges >>= \(Edge source target) -> [ source, target ])
+  nodeMap <- for nodeIdentityMap $ \(NodeHash hash) -> Sqlite.executeSql db
+    [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
+    [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
+  let graph = Text.unlines
+        [ "digraph {"
+        , "    node" <> graphvizAttributes
+                [ ("color", "#efefef")
+                , ("penwidth", "0.2")
+                , ("style", "filled,rounded")
+                ]
+        , "    edge" <> graphvizAttributes
+                [ ("arrowsize", "0.5")
+                , ("color", "#3f3f3f")
+                , ("penwidth", "0.2")
+                ]
+        , Text.unlines $ uncurry graphvizNode <$> Map.assocs nodeMap
+        , Text.unlines $ graphvizEdge <$> edges
+        , "}"
+        ]
+  Text.writeFile "/tmp/skyscope.dot" graph  -- For debugging
+  readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
+    (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
+    (ExitSuccess, svg, _) -> LazyText.fromStrict svg
+  where
+    graphvizNode :: NodeHash -> Node -> Text
+    graphvizNode nodeHash@(NodeHash hash) (Node nodeType nodeData) =
+      let label = nodeType <> "\\n" <> nodeData
+          nodeState = Map.lookup nodeHash nodeStates
+          hidden = nodeState == Nothing
+      in "    node_" <> hash <> graphvizAttributes
+              [ ("class", Text.pack $ show nodeState)
+              , ("width", if hidden then "0.1" else "3.0")
+              , ("height", if hidden then "0.1" else "0.6")
+              , ("shape", if hidden then "point" else "box")
+              , ("fixedsize", "true")
+              , ("label", label)
+              , ("id", hash)
+              , ("tooltip", nodeData <> "\n\n" <> case nodeState of
+                  Just Expanded -> "Click to collapse this node and hide its edges. Hold CTRL and click to hide it entirely."
+                  Just Collapsed -> "Click to expand this node and show its edges. Hold CTRL and click to hide it."
+                  Nothing -> "Click to show this node."
+                )
+              ]
+    graphvizEdge :: Edge -> Text
+    graphvizEdge (Edge (NodeHash source) (NodeHash target)) =
+      "    node_" <> source <> " -> node_" <> target <>
+      graphvizAttributes [ ("id", source <> "_" <> target) ]
+    graphvizAttributes :: [(Text, Text)] -> Text
+    graphvizAttributes attrs =
+      let f (name, value) = name <> "=\"" <> value <> "\""
+      in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
 
 -- TODO: Change to `Map NodeHash NodeState`
 renderSvg :: Sqlite.Database -> Map NodeHash Bool -> IO LazyText.Text

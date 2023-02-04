@@ -1,3 +1,4 @@
+/*
 div.searchBox {
     background-color: #e7ecee;
     border-radius: 20px;
@@ -77,6 +78,8 @@ g.node.unselected path {
     fill: #ffffff;
 }
 
+*/
+
 
 
 
@@ -94,18 +97,17 @@ div#SearchBoxOverlay {
 }
 
 div#SearchBox {
-    background-color: #e7ecee;
+    background-color: hsl(197, 17%, 92%);
     border-radius: 20px;
-    margin: 30px 30px;
-    opacity: 90%;
+    margin: 30px 30px 0px;
+    opacity: 95%;
     overflow: hidden;
-    padding: 30px;
 }
 
 div#SearchBar {
     align-items: center;
     display: flex;
-    margin-bottom: 10px;
+    padding: 30px 30px 0px;
 }
 
 input#PatternInput {
@@ -119,18 +121,34 @@ input#PatternInput {
 }
 
 span#NodeCount {
-    color: #4f4f4f;
+    color: hsl(0, 0%, 31%);
     font-size: 18px;
     font-style: italic;
     padding-left: 20px;
     user-select: none;
 }
 
+div#SearchResults {
+    padding: 15px 0px 15px;
+}
+
 div.ResultRow {
+    color: hsl(0, 0%, 50%);
     cursor: pointer;
     margin-bottom: 1px;
-    padding: 2px 10px;
+    overflow: hidden;
+    padding: 2px 40px;
+    text-overflow: ellipsis;
     user-select: none;
+    white-space: nowrap;
+}
+
+div.ResultRow.Selected {
+    background-color: hsl(199, 21%, 82%);
+}
+
+div.ResultRow:hover, div.ResultRow.Selected:hover {
+    background-color: hsl(199, 21%, 77%);
 }
 
 div.ResultRow > span.NodeType {
@@ -140,8 +158,12 @@ div.ResultRow > span.NodeType {
     white-space: nowrap;
 }
 
+div.ResultRow > span.Context {
+    color: hsl(0, 0%, 50%);
+}
+
 div.ResultRow > span.Highlight {
-    color: #000000;
+    color: hsl(0, 0%, 0%);
     text-decoration: underline;
 }
 

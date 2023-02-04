@@ -21,13 +21,14 @@
   , "record"
   , "refs"
   , "strings"
+  , "transformers"
   , "tuples"
   , "typelevel-prelude"
   , "unsafe-coerce"
   , "web-dom"
   , "web-events"
-  , "web-uievents"
   , "web-html"
+  , "web-uievents"
   ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs" ]
