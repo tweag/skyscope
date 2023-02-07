@@ -145,7 +145,6 @@ g.node.Collapsed path {
     stroke: #ffffff;
 }
 
-/*
 g.node.Selected:hover path {
     fill: #e5fffd;
 }
@@ -164,7 +163,6 @@ g.node.Unselected path {
     stroke: #3f3f3f;
     fill: #ffffff;
 }
-*/
 
 
 

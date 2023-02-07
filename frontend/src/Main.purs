@@ -1,5 +1,4 @@
 module Main where
-
 import Affjax.RequestBody as Affjax.RequestBody
 import Affjax.ResponseFormat as Affjax.ResponseFormat
 import Affjax.Web as Affjax
@@ -19,6 +18,7 @@ import Data.Function ((>>>))
 import Data.Functor ((<#>))
 import Data.HTTP.Method as HTTP.Method
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Show as Show
 import Data.String (replaceAll, split)
 import Data.String (toLower, toUpper)
 import Data.String.CodeUnits as String
@@ -60,6 +60,7 @@ import Web.DOM.Element as Element
 import Web.DOM.HTMLCollection as HTMLCollection
 import Web.DOM.Node (Node)
 import Web.DOM.Node as Node
+import Web.DOM.NonElementParentNode as NonElementParentNode
 import Web.Event.Event (Event, EventType, type_)
 import Web.Event.EventTarget (EventListener)
 import Web.Event.EventTarget as EventTarget
@@ -85,53 +86,14 @@ load :: Effect Unit
 load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
   Nothing -> Console.error "html <body> element not found"
   Just body -> do
-    graph /\ nodeConfiguration <- makeGraph onClickNode
+    nodeConfiguration <- makeNodeConfiguration
+    nodeClickHandler <- makeTools nodeConfiguration
+    graph <- makeGraph nodeConfiguration nodeClickHandler
     searchBox /\ focusInput <- createSearchBox nodeConfiguration
     let bodyElement = HTMLElement.toElement body
     appendElement searchBox bodyElement
     appendElement graph bodyElement
     focusInput
-
-  where
-    onClickNode :: Element -> MouseEvent -> Effect Boolean
-    onClickNode node event = do
-       Console.log "onClickNode"
-       pure false 
-    
-
-
-
-
-
-
-
-{-
-data ToolMode
-  = Explore
-  | Crop
-  | Path
-  | Find
-
-makeTools :: Effect (NodeHash -> Effect EventListener)
-makeTools = pure onClickNode
-  where
-    onClickNode hash = EventTarget.eventListener $ \event -> pure unit
-
-type ToolConfiguration =
-  { 
-  }
--}
-
-
-
---type NodeSelection =
---  { select :: Boolean -> NodeHash -> Effect Unit
---  , selected :: NodeHash -> Effect Boolean
---  , selection :: Effect (Array NodeHash)
---  }
-
---makeNodeSelection :: Effect NodeSelection
---makeNodeSelection = undefined
 
 type NodeHash = String
 
@@ -142,45 +104,113 @@ instance Show NodeState where
   show Expanded = "Expanded"
 
 type NodeConfiguration =
-  { subscribe :: (Object NodeState -> Effect Unit) -> Effect Unit
+  { onChange :: Effect Unit -> Effect Unit
   , get :: NodeHash -> Effect (Maybe NodeState)
   , show :: NodeHash -> NodeState -> Effect Unit
   , hide :: NodeHash -> Effect Unit
+  , visible :: Effect (Array NodeHash)
+  , json :: Effect Json
   }
 
-makeGraph :: (Element -> MouseEvent -> Effect Boolean) -> Effect (Element /\ NodeConfiguration)
-makeGraph onClickNode = do
+makeNodeConfiguration :: Effect NodeConfiguration
+makeNodeConfiguration = do
   nodeStates <- Ref.new Object.empty
   channel <- Signal.channel =<< Ref.read nodeStates
   let notify = Signal.send channel =<< Ref.read nodeStates
-      subscribe action = Signal.runSignal $ action <$> Signal.subscribe channel
+      onChange action = Signal.runSignal $ const action <$> Signal.subscribe channel
       get hash = Object.lookup hash <$> Ref.read nodeStates
       show hash state = Ref.modify_ (Object.insert hash state) nodeStates *> notify
       hide hash = Ref.modify_ (Object.delete hash) nodeStates *> notify
-      nodeConfiguration = { subscribe, get, show, hide }
-  graph <- createElement "div" "graph" Nothing
-  renderGraph <- makeGraphRenderer graph nodeStates
-  subscribe $ const $ runAff $ renderGraph >>= \svg -> liftEffect $ do
-    removeAllChildren graph
-    decorateGraph svg $ \element event -> do
-      handled <- onClickNode element event
-      if handled then pure unit else do
-        hash <- Element.id element
-        if MouseEvent.ctrlKey event
-          then nodeConfiguration.hide hash
-          else containsClass element "Expanded" >>= if _
-            then nodeConfiguration.show hash Collapsed
-            else nodeConfiguration.show hash Expanded
-    appendElement svg graph
-  pure $ graph /\ nodeConfiguration
+      visible = Object.keys <$> Ref.read nodeStates
+      json =  Argonaut.fromObject <<< map jsonState <$> Ref.read nodeStates
+      jsonState = Argonaut.fromString <<< Show.show
+  pure { onChange, get, show, hide, visible, json }
+
+data ToolMode
+  = Explore
+  | Crop
+  | Path
+  | Find
+
+type NodeClickHandler = Element -> MouseEvent -> Effect Boolean
+
+makeTools :: NodeConfiguration -> Effect NodeClickHandler
+makeTools nodeConfiguration = do
+  handlers <- sequence [ makeCrop ]
+  pure \element event ->
+    let tryTools handlers = case Array.uncons handlers of
+          Just { head: handler, tail: handlers} -> do
+             handled <- handler element event
+             if handled then pure true
+               else tryTools handlers
+          Nothing -> pure false
+     in tryTools handlers
 
   where
-    makeGraphRenderer :: Element -> Ref (Object NodeState) -> Effect (Aff Element)
-    makeGraphRenderer graph nodeStates = makeThrottledAction $ do
-      nodeStates <- liftEffect $ Ref.read nodeStates
+    makeCrop :: Effect NodeClickHandler
+    makeCrop = do
+      active <- Ref.new false
+      selection <- Ref.new Object.empty
+      let updateDOM = nodes >>= traverse_ \node -> do
+            hash <- Element.id node
+            active <- Ref.read active
+            selection <- Ref.read selection
+            for_ [ "Selected", "Unselected" ] (removeClass node)
+            when active $ case Object.lookup hash selection of
+              Just _ -> addClass node "Selected"
+              Nothing -> addClass node "Unselected"
+      onKeyDown "Shift" do
+        Ref.write true active
+        Ref.write Object.empty selection
+        updateDOM
+      onKeyUp "Shift" do
+        Ref.write false active
+        updateDOM
+        selection <- Ref.read selection
+        when (not $ Object.isEmpty selection) $
+          nodeConfiguration.visible >>= traverse_ \hash ->
+            if hash `Object.member` selection
+                then pure unit else nodeConfiguration.hide hash
+      pure \node event -> Ref.read active >>= not >>> if _ then pure false else do
+        hash <- Element.id node
+        let toggle = case _ of
+              Just _ -> Nothing
+              Nothing -> Just Collapsed
+        Ref.modify_ (Object.alter toggle hash) selection
+        updateDOM
+        pure true
+
+    nodes :: Effect (Array Element)
+    nodes = do
+      document <- HTMLDocument.toNonElementParentNode <$> (Window.document =<< HTML.window)
+      NonElementParentNode.getElementById "graph" document >>= case _ of
+        Nothing -> [] <$ Console.error "unable to find graph element"
+        Just graph -> getElementsByClassName "node" graph
+
+makeGraph :: NodeConfiguration -> (Element -> MouseEvent -> Effect Boolean) -> Effect Element
+makeGraph nodeConfiguration onClickNode = do
+  graph <- createElement "div" "graph" Nothing
+  renderGraph <- makeGraphRenderer graph nodeConfiguration
+  nodeConfiguration.onChange $ runAff $
+    renderGraph >>= \svg -> liftEffect do
+      removeAllChildren graph
+      decorateGraph svg \element event -> do
+        handled <- onClickNode element event
+        if handled then pure unit else do
+          hash <- Element.id element
+          if MouseEvent.ctrlKey event
+            then nodeConfiguration.hide hash
+            else containsClass element "Expanded" >>= if _
+              then nodeConfiguration.show hash Collapsed
+              else nodeConfiguration.show hash Expanded
+      appendElement svg graph
+  pure graph
+
+  where
+    makeGraphRenderer :: Element -> NodeConfiguration -> Effect (Aff Element)
+    makeGraphRenderer graph nodeConfiguration = makeThrottledAction do
       result <- Affjax.post Affjax.ResponseFormat.document "/render_purescript"
-        $ Just $ Affjax.RequestBody.json $ Argonaut.fromObject
-        $ Argonaut.fromString <<< show <$> nodeStates
+        <<< Just <<< Affjax.RequestBody.json =<< liftEffect nodeConfiguration.json
       liftEffect $ case result of
         Left err -> error $ Affjax.printError err
         Right response -> do
@@ -193,7 +223,7 @@ makeGraph onClickNode = do
     decorateGraph svg onClickNode = do
       nodes <- getElementsByClassName "node" svg
       for_ nodes \node -> do
-        listener <- EventTarget.eventListener $ \event ->
+        listener <- EventTarget.eventListener \event ->
           for_ (MouseEvent.fromEvent event) (onClickNode node)
         EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget node
         hash <- Element.id node
@@ -282,7 +312,7 @@ createSearchBox nodeConfiguration = do
   Element.setAttribute "placeholder" placeholder patternInput
   Element.setAttribute "title" title patternInput
   previousPattern <- Ref.new Nothing
-  findNodes <- makeThrottledAction $ do
+  findNodes <- makeThrottledAction do
     pattern <- liftEffect $ map (fromMaybe "")
       $ traverse HTMLInputElement.value
       $ HTMLInputElement.fromElement patternInput
@@ -399,21 +429,30 @@ createSearchBox nodeConfiguration = do
         traverse_ HTMLElement.blur (HTMLElement.fromElement patternInput)
         Ref.write Nothing previousPattern
 
-      onDocumentEvent :: EventType -> (Event -> Effect Unit) -> Effect Unit
-      onDocumentEvent eventType handler = do
-        target <- HTMLDocument.toEventTarget <$> (Window.document =<< HTML.window)
-        listener <- EventTarget.eventListener handler
-        EventTarget.addEventListener eventType listener false target
-
-  onDocumentEvent EventTypes.keyup \event ->
-    for_ (KeyboardEvent.fromEvent event) \event ->
-      if KeyboardEvent.key event == "Escape"
-        then collapseSearch else pure unit
+  onKeyUp "Escape" collapseSearch
 
   let focusPatternInput :: Effect Unit
       focusPatternInput = traverse_ HTMLElement.focus
                         $ HTMLElement.fromElement patternInput
   pure $ overlay /\ focusPatternInput
+
+onKeyUp :: String -> Effect Unit -> Effect Unit
+onKeyUp = onKeyEvent EventTypes.keyup
+
+onKeyDown :: String -> Effect Unit -> Effect Unit
+onKeyDown = onKeyEvent EventTypes.keydown
+
+onKeyEvent :: EventType -> String -> Effect Unit -> Effect Unit
+onKeyEvent eventType key action = onDocumentEvent eventType \event ->
+  for_ (KeyboardEvent.fromEvent event) \event ->
+    if KeyboardEvent.key event == key
+      then action else pure unit
+
+onDocumentEvent :: EventType -> (Event -> Effect Unit) -> Effect Unit
+onDocumentEvent eventType handler = do
+  target <- Window.toEventTarget <$> HTML.window
+  listener <- EventTarget.eventListener handler
+  EventTarget.addEventListener eventType listener false target
 
 formatNodeType :: String -> String
 formatNodeType nodeType
@@ -433,7 +472,7 @@ makeThrottledAction :: forall a. Aff a -> Effect (Aff a)
 makeThrottledAction action = do
   mutex <- Effect.AVar.new unit
   tokenRef <- Ref.new 0
-  pure $ do
+  pure do
     token <- liftEffect $ Ref.modify (_ + 1) tokenRef
     let run = liftEffect (Ref.read tokenRef) >>= \t -> if t == token
           then action else Aff.throwError $ Aff.error "action superseded"
