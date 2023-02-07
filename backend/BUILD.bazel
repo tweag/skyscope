@@ -10,7 +10,6 @@ haskell_binary(
     ],
     extra_srcs = [
         #"//frontend:index.js",
-        "//frontend:src/main.js",
         "//frontend:src/theme.css",
     ],
     deps = [

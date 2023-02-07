@@ -78,7 +78,6 @@ instance ToJSONKey NodeHash where
 data NodeState
   = Collapsed
   | Expanded
-  | Hidden  -- TODO: Delete after Purescript refactor is complete
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
 data Edge = Edge
@@ -146,43 +145,6 @@ server :: Sqlite.Database -> IO ()
 server db = do
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      mainJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/main.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/theme.css"
-      Web.html $ LazyText.fromStrict $ Text.unlines
-        [ "<html>"
-        , "  <head>"
-        , "    <link rel=\"icon\" href=\"data:image/svg+xml," <> favicon <> "\">"
-        , "    <title>Skyscope</title>"
-        , "    <meta charset=\"UTF-8\">"
-        , "    <script>"
-        ,       Text.decodeUtf8 $(embedFile "frontend/src/main.js")
-        --,       mainJs
-        , "    </script>"
-        , "    <style>"
-        --,       styleCss
-        ,       Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
-        , "    </style>"
-        , "  </head>"
-        , "  <body></body>"
-        , "</html>"
-        ]
-    Web.post "/find" $ Json.eitherDecode <$> Web.body >>= \case
-      Right pattern -> do
-        --liftIO $ threadDelay 5000000
-        Web.json =<< liftIO (findNodes db 100 pattern)
-      Left err -> badRequest err
-    Web.post "/render" $ Json.eitherDecode <$> Web.body >>= \case
-      Right visibleNodes -> do
-        Web.setHeader "Content-Type" "image/svg+xml"
-        Web.text =<< liftIO (renderSvg db visibleNodes)
-      Left err -> badRequest err
-    Web.post "/render_purescript" $ Json.eitherDecode <$> Web.body >>= \case
-      Right visibleNodes -> do
-        --liftIO $ threadDelay 5000000
-        Web.setHeader "Content-Type" "image/svg+xml"
-        Web.text =<< liftIO (renderSvgPurescript db visibleNodes)
-      Left err -> badRequest err
-    Web.get "/purescript" $ do
       --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
       indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/index.js"
       styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/theme.css"
@@ -207,6 +169,16 @@ server db = do
         , "  <body></body>"
         , "</html>"
         ]
+    Web.post "/find" $ Json.eitherDecode <$> Web.body >>= \case
+      Right pattern -> do
+        --liftIO $ threadDelay 5000000
+        Web.json =<< liftIO (findNodes db 100 pattern)
+      Left err -> badRequest err
+    Web.post "/render" $ Json.eitherDecode <$> Web.body >>= \case
+      Right visibleNodes -> do
+        Web.setHeader "Content-Type" "image/svg+xml"
+        Web.text =<< liftIO (renderSvg db visibleNodes)
+      Left err -> badRequest err
   where
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
     favicon = "<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 "
@@ -225,8 +197,8 @@ findNodes db limit pattern = do
     [ SQLText hash, SQLText nodeType, SQLText nodeData ] ->
       (NodeHash hash, Node nodeType nodeData)
 
-renderSvgPurescript :: Sqlite.Database -> Map NodeHash NodeState -> IO LazyText.Text
-renderSvgPurescript db nodeStates = do
+renderSvg :: Sqlite.Database -> Map NodeHash NodeState -> IO LazyText.Text
+renderSvg db nodeStates = do
   edges <- fmap (nub . concat) $ flip Map.traverseWithKey nodeStates $
     \(NodeHash hash) state -> Sqlite.executeSql db
       [ "SELECT source, target FROM edge WHERE source = ?1 OR target = ?1;" ]
@@ -290,76 +262,6 @@ renderSvgPurescript db nodeStates = do
     graphvizAttributes attrs =
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
-
--- TODO: Change to `Map NodeHash NodeState`
-renderSvg :: Sqlite.Database -> Map NodeHash Bool -> IO LazyText.Text
-renderSvg db hashes = do
-  edges <- fmap (nub . concat) $ flip Map.traverseWithKey hashes $
-    \(NodeHash hash) collapsed -> Sqlite.executeSql db
-      [ "SELECT source, target FROM edge WHERE source = ?1 OR target = ?1;" ]
-      [ SQLText hash ] <&> (>>= (\[ SQLText s, SQLText t ] ->
-        let source = NodeHash s
-            target = NodeHash t
-            hidden  = (`Map.notMember` hashes)
-        in if collapsed && (hidden source || hidden target)
-            then [] else [ Edge (NodeHash s) (NodeHash t) ]))
-  let nodeIdentityMap = Map.fromList $ map (join (,)) $ Map.keys hashes <>
-        (edges >>= \(Edge source target) -> [ source, target ])
-  nodeMap <- for nodeIdentityMap $ \(NodeHash hash) -> Sqlite.executeSql db
-    [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
-    [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
-  let graph = Text.unlines
-        [ "digraph {"
-        , "    node" <> graphvizAttributes
-                [ ("color", "#efefef")
-                , ("penwidth", "0.2")
-                , ("style", "filled,rounded")
-                ]
-        , "    edge" <> graphvizAttributes
-                [ ("arrowsize", "0.5")
-                , ("color", "#3f3f3f")
-                , ("penwidth", "0.2")
-                ]
-        , Text.unlines $ uncurry graphvizNode <$> Map.assocs nodeMap
-        , Text.unlines $ graphvizEdge <$> edges
-        , "}"
-        ]
-  Text.writeFile "/tmp/skyscope.dot" graph  -- For debugging
-  readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
-    (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
-    (ExitSuccess, svg, _) -> LazyText.fromStrict svg
-  where
-    graphvizNode :: NodeHash -> Node -> Text
-    graphvizNode nodeHash@(NodeHash hash) (Node nodeType nodeData) =
-      let label = nodeType <> "\\n" <> nodeData
-          nodeState = case Map.lookup nodeHash hashes of
-            Just True -> Collapsed
-            Just False -> Expanded
-            Nothing -> Hidden
-      in "    node_" <> hash <> graphvizAttributes
-              [ ("class", Text.pack $ show nodeState)
-              , ("width", if nodeState == Hidden then "0.1" else "3.0")
-              , ("height", if nodeState == Hidden then "0.1" else "0.6")
-              , ("shape", if nodeState == Hidden then "point" else "box")
-              , ("fixedsize", "true")
-              , ("label", label)
-              , ("id", hash)
-              , ("tooltip", nodeData <> "\n\n" <> case nodeState of
-                  Expanded -> "Click to collapse this node and hide its edges. Hold CTRL and click to hide it entirely."
-                  Collapsed -> "Click to expand this node and show its edges. Hold CTRL and click to hide it."
-                  Hidden -> "Click to show this node."
-                )
-              ]
-    graphvizEdge :: Edge -> Text
-    graphvizEdge (Edge (NodeHash source) (NodeHash target)) =
-      "    node_" <> source <> " -> node_" <> target <>
-      graphvizAttributes [ ("id", source <> "_" <> target) ]
-    graphvizAttributes :: [(Text, Text)] -> Text
-    graphvizAttributes attrs =
-      let f (name, value) = name <> "=\"" <> value <> "\""
-      in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
-
-
 
 {-
 

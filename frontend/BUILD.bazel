@@ -1,5 +1,4 @@
 exports_files( [
-    "src/main.js",
     "src/theme.css",
 ])
 

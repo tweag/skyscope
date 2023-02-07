@@ -168,9 +168,9 @@ makeTools nodeConfiguration = do
         updateDOM
         selection <- Ref.read selection
         when (not $ Object.isEmpty selection) $
-          nodeConfiguration.visible >>= traverse_ \hash ->
-            if hash `Object.member` selection
-                then pure unit else nodeConfiguration.hide hash
+          nodeConfiguration.visible >>= traverse_
+            \hash -> if hash `Object.member` selection
+              then pure unit else nodeConfiguration.hide hash
       pure \node event -> Ref.read active >>= not >>> if _ then pure false else do
         hash <- Element.id node
         let toggle = case _ of
@@ -209,7 +209,7 @@ makeGraph nodeConfiguration onClickNode = do
   where
     makeGraphRenderer :: Element -> NodeConfiguration -> Effect (Aff Element)
     makeGraphRenderer graph nodeConfiguration = makeThrottledAction do
-      result <- Affjax.post Affjax.ResponseFormat.document "/render_purescript"
+      result <- Affjax.post Affjax.ResponseFormat.document "/render"
         <<< Just <<< Affjax.RequestBody.json =<< liftEffect nodeConfiguration.json
       liftEffect $ case result of
         Left err -> error $ Affjax.printError err
