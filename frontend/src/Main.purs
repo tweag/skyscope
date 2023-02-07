@@ -85,14 +85,14 @@ main = do
 load :: Effect Unit
 load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
   Nothing -> Console.error "html <body> element not found"
-  Just body -> do
+  Just bodyElement -> do
     nodeConfiguration <- makeNodeConfiguration
-    nodeClickHandler <- makeTools nodeConfiguration
-    graph <- makeGraph nodeConfiguration nodeClickHandler
+    let body = HTMLElement.toElement bodyElement
+    graph <- createElement "div" "graph" $ Just body
+    nodeClickHandler <- makeTools graph nodeConfiguration
+    attachGraphRenderer graph nodeConfiguration nodeClickHandler
     searchBox /\ focusInput <- createSearchBox nodeConfiguration
-    let bodyElement = HTMLElement.toElement body
-    appendElement searchBox bodyElement
-    appendElement graph bodyElement
+    appendElement searchBox body
     focusInput
 
 type NodeHash = String
@@ -104,7 +104,7 @@ instance Show NodeState where
   show Expanded = "Expanded"
 
 type NodeConfiguration =
-  { onChange :: Effect Unit -> Effect Unit
+  { onChange :: (Maybe NodeHash -> Effect Unit) -> Effect Unit
   , get :: NodeHash -> Effect (Maybe NodeState)
   , show :: NodeHash -> NodeState -> Effect Unit
   , hide :: NodeHash -> Effect Unit
@@ -115,12 +115,12 @@ type NodeConfiguration =
 makeNodeConfiguration :: Effect NodeConfiguration
 makeNodeConfiguration = do
   nodeStates <- Ref.new Object.empty
-  channel <- Signal.channel =<< Ref.read nodeStates
-  let notify = Signal.send channel =<< Ref.read nodeStates
-      onChange action = Signal.runSignal $ const action <$> Signal.subscribe channel
+  channel <- Signal.channel Nothing
+  let notify = Signal.send channel
+      onChange action = Signal.runSignal $ action <$> Signal.subscribe channel
       get hash = Object.lookup hash <$> Ref.read nodeStates
-      show hash state = Ref.modify_ (Object.insert hash state) nodeStates *> notify
-      hide hash = Ref.modify_ (Object.delete hash) nodeStates *> notify
+      show hash state = Ref.modify_ (Object.insert hash state) nodeStates *> notify (Just hash)
+      hide hash = Ref.modify_ (Object.delete hash) nodeStates *> notify Nothing
       visible = Object.keys <$> Ref.read nodeStates
       json =  Argonaut.fromObject <<< map jsonState <$> Ref.read nodeStates
       jsonState = Argonaut.fromString <<< Show.show
@@ -132,10 +132,10 @@ data ToolMode
   | Path
   | Find
 
-type NodeClickHandler = Element -> MouseEvent -> Effect Boolean
+type NodeClickHandler a = Element -> MouseEvent -> Effect a
 
-makeTools :: NodeConfiguration -> Effect NodeClickHandler
-makeTools nodeConfiguration = do
+makeTools :: Element -> NodeConfiguration -> Effect (NodeClickHandler Boolean)
+makeTools graph nodeConfiguration = do
   handlers <- sequence [ makeCrop ]
   pure \element event ->
     let tryTools handlers = case Array.uncons handlers of
@@ -147,7 +147,7 @@ makeTools nodeConfiguration = do
      in tryTools handlers
 
   where
-    makeCrop :: Effect NodeClickHandler
+    makeCrop :: Effect (NodeClickHandler Boolean)
     makeCrop = do
       active <- Ref.new false
       selection <- Ref.new Object.empty
@@ -181,18 +181,13 @@ makeTools nodeConfiguration = do
         pure true
 
     nodes :: Effect (Array Element)
-    nodes = do
-      document <- HTMLDocument.toNonElementParentNode <$> (Window.document =<< HTML.window)
-      NonElementParentNode.getElementById "graph" document >>= case _ of
-        Nothing -> [] <$ Console.error "unable to find graph element"
-        Just graph -> getElementsByClassName "node" graph
+    nodes = getElementsByClassName "node" graph
 
-makeGraph :: NodeConfiguration -> (Element -> MouseEvent -> Effect Boolean) -> Effect Element
-makeGraph nodeConfiguration onClickNode = do
-  graph <- createElement "div" "graph" Nothing
-  renderGraph <- makeGraphRenderer graph nodeConfiguration
-  nodeConfiguration.onChange $ runAff $
-    renderGraph >>= \svg -> liftEffect do
+attachGraphRenderer :: Element -> NodeConfiguration -> NodeClickHandler Boolean -> Effect Unit
+attachGraphRenderer graph nodeConfiguration onClickNode = do
+  render <- makeRenderer nodeConfiguration
+  nodeConfiguration.onChange \changedNodeHash ->
+    runAff $ render >>= \svg -> liftEffect do
       removeAllChildren graph
       decorateGraph svg \element event -> do
         handled <- onClickNode element event
@@ -204,11 +199,13 @@ makeGraph nodeConfiguration onClickNode = do
               then nodeConfiguration.show hash Collapsed
               else nodeConfiguration.show hash Expanded
       appendElement svg graph
-  pure graph
+      for_ changedNodeHash $ getElementById >=> case _ of
+        Nothing -> Console.error "can't find changed node"
+        Just element -> scrollIntoView element
 
   where
-    makeGraphRenderer :: Element -> NodeConfiguration -> Effect (Aff Element)
-    makeGraphRenderer graph nodeConfiguration = makeThrottledAction do
+    makeRenderer :: NodeConfiguration -> Effect (Aff Element)
+    makeRenderer nodeConfiguration = makeThrottledAction do
       result <- Affjax.post Affjax.ResponseFormat.document "/render"
         <<< Just <<< Affjax.RequestBody.json =<< liftEffect nodeConfiguration.json
       liftEffect $ case result of
@@ -219,7 +216,7 @@ makeGraph nodeConfiguration onClickNode = do
             Nothing -> error "svg element not found"
             Just svg -> pure svg
 
-    decorateGraph :: Element -> (Element -> MouseEvent -> Effect Unit) -> Effect Unit
+    decorateGraph :: Element -> NodeClickHandler Unit -> Effect Unit
     decorateGraph svg onClickNode = do
       nodes <- getElementsByClassName "node" svg
       for_ nodes \node -> do
@@ -350,7 +347,7 @@ createSearchBox nodeConfiguration = do
         in case node of
               Nothing -> Console.error "unexpected node json"
               Just (nodeType /\ nodeData) -> do
-                row <- createElement "div" hash $ Just searchResults
+                row <- createElement "div" "" $ Just searchResults
                 let updateSelected = nodeConfiguration.get hash >>= case _ of
                       Nothing -> removeClass row "Selected"
                       Just _ -> addClass row "Selected"
@@ -546,5 +543,11 @@ getElementsByClassName name element = HTMLCollection.toArray =<<
 getElementsByTagName :: String -> Element -> Effect (Array Element)
 getElementsByTagName name element = HTMLCollection.toArray =<<
   Element.getElementsByTagName name element
+
+getElementById :: String -> Effect (Maybe Element)
+getElementById id = NonElementParentNode.getElementById id =<<
+  HTMLDocument.toNonElementParentNode <$> (Window.document =<< HTML.window)
+
+foreign import scrollIntoView :: Element -> Effect Unit
 
 undefined = unsafeCoerce unit
