@@ -149,7 +149,8 @@ server db = do
       indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/index.js"
       styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/theme.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
-        [ "<html>"
+        [ "<!DOCTYPE html>"
+        , "<html>"
         , "  <head>"
         , "    <title>Skyscope</title>"
         , "    <meta charset=\"UTF-8\">"
@@ -216,6 +217,7 @@ renderSvg db nodeStates = do
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
   let graph = Text.unlines
         [ "digraph {"
+        , "    pad=10"
         , "    node" <> graphvizAttributes
                 [ ("color", "#efefef")
                 , ("penwidth", "0.2")

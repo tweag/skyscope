@@ -17,6 +17,7 @@ div#SearchBoxOverlay {
 div#SearchBox {
     background-color: hsl(197, 17%, 92%);
     border-radius: 20px;
+    border: 1px solid hsl(197, 23%, 40%);
     margin: 30px 30px 0px;
     opacity: 95%;
     overflow: hidden;
@@ -127,124 +128,48 @@ g.node {
 }
 
 g.node text.NodeType {
-    font-size: 14;
+    font-size: 14px;
     font-weight: bold;
 }
 
 g.node text.NodeLabel {
-    font-size: 10;
+    font-size: 10px;
+}
+
+g.node path {
+    fill: hsl(0, 0%, 94%);
+    transition: fill 500ms ease-in-out;
+}
+
+g.node.Changed path, g.node.Collapsed.Changed path {
+    fill: hsl(49, 100%, 79%);
 }
 
 g.node ellipse.node {
-    fill: #ffffff;
-    stroke: #3f3f3f;
+    fill: hsl(0, 0%, 100%);
+    stroke: hsl(0, 0%, 25%);
 }
 
 g.node.Collapsed path {
-    fill: #ffffff;
-    stroke: #ffffff;
+    fill: hsl(0, 0%, 100%);
+    stroke: hsl(0, 0%, 100%);
 }
 
 g.node.Selected:hover path {
-    fill: #e5fffd;
+    fill: hsl(175, 100%, 95%);
 }
 
 g.node.Selected path {
-    stroke: #3f3f3f;
-    fill: #efefef;
+    stroke: hsl(0, 0%, 25%);
+    fill: hsl(0, 0%, 94%);
 }
 
 g.node.Unselected:hover path {
-    fill: #e5fffd;
+    fill: hsl(175, 100%, 95%);
 }
 
 g.node.Unselected path {
     stroke-dasharray: 5 2;
-    stroke: #3f3f3f;
-    fill: #ffffff;
+    stroke: hsl(0, 0%, 25%);
+    fill: hsl(0, 0%, 100%);
 }
-
-
-
-
-/*
-div.searchBox {
-    background-color: #e7ecee;
-    border-radius: 20px;
-    opacity: 90%;
-    padding: 30px;
-    overflow: hidden;
-    min-width: 600px;
-}
-
-div.resultRow span.nodeType { color: #3f3f3f; }
-
-span.highlight {
-    color: #000000;
-    text-decoration: underline;
-}
-
-div.resultRow {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: #7f7f7f;
-}
-
-div.resultRow.unselected:hover {
-    background-color: #e5fffd;
-}
-
-div.resultRow.selected:hover {
-    background-color: #e5fffd;
-}
-
-div.resultRow.selected {
-    background-color: hsla(199, 21%, 82%, 1);
-}
-
-text.nodeType {
-    font-size: 14;
-    font-weight: bold;
-}
-
-text.nodeLabel {
-    font-size: 10;
-}
-
-g.node {
-    fill: #3f3f3f;
-    cursor: pointer;
-    user-select: none;
-}
-
-ellipse.node {
-    fill: #ffffff;
-    stroke: #3f3f3f;
-}
-
-g.node.Collapsed path {
-    fill: #ffffff;
-    stroke: #ffffff;
-}
-
-g.node.selected:hover path {
-    fill: #e5fffd;
-}
-
-g.node.selected path {
-    stroke: #3f3f3f;
-    fill: #efefef;
-}
-
-g.node.unselected:hover path {
-    fill: #e5fffd;
-}
-
-g.node.unselected path {
-    stroke-dasharray: 5 2;
-    stroke: #3f3f3f;
-    fill: #ffffff;
-}
-
-*/

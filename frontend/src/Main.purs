@@ -3,6 +3,7 @@ import Affjax.RequestBody as Affjax.RequestBody
 import Affjax.ResponseFormat as Affjax.ResponseFormat
 import Affjax.Web as Affjax
 import Control.Monad.Error.Class (class MonadThrow, throwError)
+import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Core as Argonaut
 import Data.Array ((!!))
@@ -18,6 +19,7 @@ import Data.Function ((>>>))
 import Data.Functor ((<#>))
 import Data.HTTP.Method as HTTP.Method
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Number as Number
 import Data.Show as Show
 import Data.String (replaceAll, split)
 import Data.String (toLower, toUpper)
@@ -29,7 +31,7 @@ import Data.String.Regex.Unsafe as Regex
 import Data.Symbol (class IsSymbol)
 import Data.Time.Duration (Milliseconds(..))
 import Data.Traversable (for, sequence, traverse)
-import Data.Tuple (uncurry)
+import Data.Tuple (Tuple(..), uncurry)
 import Data.Tuple.Nested ((/\), type (/\))
 import Debug (trace)
 import Effect (Effect)
@@ -43,6 +45,7 @@ import Effect.Exception (Error)
 import Effect.Exception as Exception
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
+import Effect.Timer as Timer
 import Foreign.Object (Object)
 import Foreign.Object as Object
 import Prelude
@@ -188,7 +191,6 @@ attachGraphRenderer graph nodeConfiguration onClickNode = do
   render <- makeRenderer nodeConfiguration
   nodeConfiguration.onChange \changedNodeHash ->
     runAff $ render >>= \svg -> liftEffect do
-      removeAllChildren graph
       decorateGraph svg \element event -> do
         handled <- onClickNode element event
         if handled then pure unit else do
@@ -198,10 +200,15 @@ attachGraphRenderer graph nodeConfiguration onClickNode = do
             else containsClass element "Expanded" >>= if _
               then nodeConfiguration.show hash Collapsed
               else nodeConfiguration.show hash Expanded
+      removeAllChildren graph
       appendElement svg graph
       for_ changedNodeHash $ getElementById >=> case _ of
         Nothing -> Console.error "can't find changed node"
-        Just element -> scrollIntoView element
+        Just element -> do
+           addClass element "Changed"
+           void $ Timer.setTimeout animationDuration do
+              removeClass element "Changed"
+              scrollIntoView element
 
   where
     makeRenderer :: NodeConfiguration -> Effect (Aff Element)
@@ -218,29 +225,83 @@ attachGraphRenderer graph nodeConfiguration onClickNode = do
 
     decorateGraph :: Element -> NodeClickHandler Unit -> Effect Unit
     decorateGraph svg onClickNode = do
-      nodes <- getElementsByClassName "node" svg
-      for_ nodes \node -> do
+      getElementsByClassName "edge" svg >>= traverse_ animateFadeIn
+      getElementsByClassName "node" svg >>= traverse_ \node -> do
         listener <- EventTarget.eventListener \event ->
           for_ (MouseEvent.fromEvent event) (onClickNode node)
         EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget node
         hash <- Element.id node
-        paths <- getElementsByTagName "path" node
-        texts <- getElementsByTagName "text" node
-        case paths /\ texts of
-          [ pathElement ] /\ [ typeElement, labelElement ] -> do
-            addClass pathElement "Selectable"
-            prettyNodeType <- formatNodeType <$> textContent typeElement
+        deconstructNodeElement node >>= case _ of
+          Just (VisibleNode visibleNode) -> do
+            addClass visibleNode.background "Selectable"
+            prettyNodeType <- formatNodeType <$> textContent visibleNode.nodeType
             addClass node prettyNodeType
-            setTextContent prettyNodeType typeElement
-            addClass typeElement "NodeType"
-            nodeData <- textContent labelElement
+            setTextContent prettyNodeType visibleNode.nodeType
+            addClass visibleNode.nodeType "NodeType"
+            nodeData <- textContent visibleNode.nodeLabel
             let label = prettyNodeLabel hash prettyNodeType nodeData
                 maxChars = 40
                 ellipsis = if String.length label > maxChars then "…" else ""
-            setTextContent (ellipsis <> String.takeRight maxChars label) labelElement
-            addClass labelElement "NodeLabel"
+            setTextContent (ellipsis <> String.takeRight maxChars label) visibleNode.nodeLabel
+            addClass visibleNode.nodeLabel "NodeLabel"
             pure unit
           _ -> pure unit
+        animateNodeTranslation node
+
+    animateNodeTranslation :: Element -> Effect Unit
+    animateNodeTranslation newNode = do
+       let getNumAttr :: String -> Element -> MaybeT Effect Number
+           getNumAttr attr elem = MaybeT $ (Number.fromString =<< _) <$> Element.getAttribute attr elem
+           centerOf :: Element -> MaybeT Effect (Number /\ Number)
+           centerOf = deconstructNodeElement >>> liftEffect >=> case _ of
+             Nothing -> MaybeT $ Nothing <$ Console.error "failed to deconstruct node element"
+             Just (VisibleNode vn) -> Tuple <$> getNumAttr "x" vn.nodeType <*> getNumAttr "y" vn.nodeType
+             Just (HiddenNode hn) -> Tuple <$> getNumAttr "cx" hn.background <*> getNumAttr "cy" hn.background
+       hash <- Element.id newNode
+       getElementById hash >>= case _ of
+         Nothing -> animateFadeIn newNode
+         Just oldNode -> runMaybeT (sub <$> centerOf oldNode <*> centerOf newNode) >>= case _ of
+           Nothing -> Console.error "unable to determine translation delta"
+           Just (dx /\ dy) -> do
+             let from = show dx <> " " <> show dy
+                 duration = show animationDuration <> "ms"
+             animate <- createSvgElement "animateTransform" newNode
+             Element.setAttribute "attributeName" "transform" animate
+             Element.setAttribute "attributeType" "XML" animate
+             Element.setAttribute "type" "translate" animate
+             Element.setAttribute "repeatCount" "1" animate
+             Element.setAttribute "fill" "freeze" animate
+             Element.setAttribute "dur" duration animate
+             Element.setAttribute "from" from animate
+             Element.setAttribute "to" "0 0" animate
+
+    animateFadeIn :: Element -> Effect Unit
+    animateFadeIn element = do
+      let duration = show animationDuration <> "ms"
+      animate <- createSvgElement "animate" element
+      Element.setAttribute "attributeName" "opacity" animate
+      Element.setAttribute "repeatCount" "1" animate
+      Element.setAttribute "fill" "freeze" animate
+      Element.setAttribute "dur" duration animate
+      Element.setAttribute "values" "0;1" animate
+
+    animationDuration :: Int
+    animationDuration = 200
+
+data NodeElement
+  = HiddenNode { background :: Element }
+  | VisibleNode { nodeType :: Element, nodeLabel :: Element, background :: Element }
+
+deconstructNodeElement :: Element -> Effect (Maybe NodeElement)
+deconstructNodeElement node = do
+  paths <- getElementsByTagName "path" node
+  texts <- getElementsByTagName "text" node
+  ellipses <- getElementsByTagName "ellipse" node
+  case paths /\ texts /\ ellipses of
+    [ background ] /\ [ nodeType, nodeLabel ] /\ _ ->
+      pure $ Just $ VisibleNode { nodeType, nodeLabel, background }
+    _ /\ _ /\ [ background ] -> pure $ Just $ HiddenNode { background }
+    _ -> pure Nothing
 
 prettyNodeLabel :: NodeHash -> String -> String -> String
 prettyNodeLabel hash nodeType nodeData = case nodeType of
@@ -493,6 +554,13 @@ createElement name id parent = do
   element <- Document.createElement name $ HTMLDocument.toDocument doc
   when (id /= "") (Element.setId id element)
   for_ parent $ appendElement element
+  pure element
+
+createSvgElement :: String -> Element -> Effect Element
+createSvgElement name parent = do
+  doc <- HTMLDocument.toDocument <$> (Window.document =<< HTML.window)
+  element <- Document.createElementNS (Just "http://www.w3.org/2000/svg") name doc
+  appendElement element parent
   pure element
 
 appendElement :: Element -> Element -> Effect Unit
