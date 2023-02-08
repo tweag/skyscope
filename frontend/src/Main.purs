@@ -250,13 +250,13 @@ attachGraphRenderer graph nodeConfiguration onClickNode = do
 
     animateNodeTranslation :: Element -> Effect Unit
     animateNodeTranslation newNode = do
-       let getNumAttr :: String -> Element -> MaybeT Effect Number
-           getNumAttr attr elem = MaybeT $ (Number.fromString =<< _) <$> Element.getAttribute attr elem
+       let attr :: String -> Element -> MaybeT Effect Number
+           attr name elem = MaybeT $ (Number.fromString =<< _) <$> Element.getAttribute name elem
            centerOf :: Element -> MaybeT Effect (Number /\ Number)
            centerOf = deconstructNodeElement >>> liftEffect >=> case _ of
              Nothing -> MaybeT $ Nothing <$ Console.error "failed to deconstruct node element"
-             Just (VisibleNode vn) -> Tuple <$> getNumAttr "x" vn.nodeType <*> getNumAttr "y" vn.nodeType
-             Just (HiddenNode hn) -> Tuple <$> getNumAttr "cx" hn.background <*> getNumAttr "cy" hn.background
+             Just (VisibleNode vn) -> Tuple <$> attr "x" vn.nodeType <*> attr "y" vn.nodeType
+             Just (HiddenNode hn) -> Tuple <$> attr "cx" hn.background <*> attr "cy" hn.background
        hash <- Element.id newNode
        getElementById hash >>= case _ of
          Nothing -> animateFadeIn newNode

@@ -4,10 +4,10 @@ exports_files( [
 
 genrule(
     name = "bundle",
-    srcs = glob(["src/**/*.purs"]) + [
+    srcs = [
         ":packages.dhall",
         ":spago.dhall",
-    ],
+    ] + glob(["src/**/*.purs"]) + glob(["src/**/*.js"]),
     outs = ["index.js"],
     tools = ["@spago//:bin/spago"],
     cmd = """

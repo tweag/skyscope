@@ -143,6 +143,7 @@ graphParser = do
 
 server :: Sqlite.Database -> IO ()
 server db = do
+  putStrLn $ "\nOpen this link in your browser: \x1b[1;36mhttp://localhost:28581/\x1b[0m\n"
   Web.scotty 28581 $ do
     Web.get "/" $ do
       --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
@@ -239,7 +240,8 @@ renderSvg db nodeStates = do
   where
     graphvizNode :: NodeHash -> Node -> Text
     graphvizNode nodeHash@(NodeHash hash) (Node nodeType nodeData) =
-      let label = nodeType <> "\\n" <> nodeData
+      let truncatedNodeData = Text.take 8192 nodeData
+          label = nodeType <> "\\n" <> truncatedNodeData
           nodeState = Map.lookup nodeHash nodeStates
           hidden = nodeState == Nothing
       in "    node_" <> hash <> graphvizAttributes
@@ -250,7 +252,7 @@ renderSvg db nodeStates = do
               , ("label", label)
               , ("id", hash)
               , ("class", Text.pack $ fromMaybe "" $ show <$> nodeState)
-              , ("tooltip", nodeData <> "\n\n" <> case nodeState of
+              , ("tooltip", truncatedNodeData <> "\n\n" <> case nodeState of
                   Just Expanded -> "Click to collapse this node and hide its edges. Hold CTRL and click to hide it entirely."
                   Just Collapsed -> "Click to expand this node and show its edges. Hold CTRL and click to hide it."
                   Nothing -> "Click to show this node."
