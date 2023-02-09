@@ -9,6 +9,7 @@ div#SearchBoxOverlay {
     justify-content: center;
     left: 0;
     max-height: 100%;
+    pointer-events: none;
     position: fixed;
     top: 0;
     width: 100%;
@@ -21,6 +22,7 @@ div#SearchBox {
     margin: 30px 30px 0px;
     opacity: 95%;
     overflow: hidden;
+    pointer-events: auto;
 }
 
 div#SearchBar {

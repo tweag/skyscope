@@ -1,4 +1,5 @@
 module Main where
+
 import Affjax.RequestBody as Affjax.RequestBody
 import Affjax.ResponseFormat as Affjax.ResponseFormat
 import Affjax.Web as Affjax
@@ -618,4 +619,5 @@ getElementById id = NonElementParentNode.getElementById id =<<
 
 foreign import scrollIntoView :: Element -> Effect Unit
 
+undefined :: forall a. a
 undefined = unsafeCoerce unit
