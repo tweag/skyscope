@@ -10,7 +10,6 @@
 
 module Main where
 
-import Control.Concurrent (threadDelay)
 import Control.Monad (join)
 import Control.Monad.IO.Class (liftIO)
 import qualified Crypto.Hash.SHA256 as SHA256
@@ -21,7 +20,6 @@ import qualified Data.Attoparsec.Combinator as Parser
 import Data.Attoparsec.Text (Parser)
 import qualified Data.Attoparsec.Text as Parser
 import Data.Bifunctor (bimap)
-import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Coerce (coerce)
@@ -146,9 +144,6 @@ server db = do
   putStrLn $ "\nOpen this link in your browser: \x1b[1;36mhttp://localhost:28581/\x1b[0m\n"
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/bazel-bin/frontend/index.js"
-      indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/index.js"
-      styleCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/theme.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<!DOCTYPE html>"
         , "<html>"
@@ -156,16 +151,15 @@ server db = do
         , "    <title>Skyscope</title>"
         , "    <meta charset=\"UTF-8\">"
         , "    <script>"
-        ,       indexJs
-        --,       Text.decodeUtf8 $ fromMaybe "" $(embedFileIfExists $(do
-        --          found <- TH.runIO $ find (pure True) (filePath ~~? "**/frontend/index.js") "."
-        --          pure $ TH.LitE $ TH.StringL $ case found of
-        --            [ path ] -> path
-        --            [] -> ""
-        --        ))
+        ,       Text.decodeUtf8 $ fromMaybe "" $(embedFileIfExists $(do
+                  found <- TH.runIO $ find (pure True) (filePath ~~? "**/frontend/index.js") "."
+                  pure $ TH.LitE $ TH.StringL $ case found of
+                    [ path ] -> path
+                    [] -> ""
+                ))
         , "    </script>"
         , "    <style>"
-        ,       styleCss
+        ,       Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
         , "    </style>"
         , "  </head>"
         , "  <body></body>"
