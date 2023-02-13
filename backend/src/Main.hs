@@ -10,9 +10,14 @@
 
 module Main where
 
-import Control.Monad (join)
+import Control.Category ((>>>))
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM.TQueue (flushTQueue, newTQueueIO, writeTQueue)
+import Control.Concurrent.STM.TVar (modifyTVar, newTVarIO, readTVar, readTVarIO, stateTVar)
+import Control.Monad (join, when)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.State (evalState, gets, modify)
+import Control.Monad.State (State, evalState, execState, gets, modify)
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (FromJSON, FromJSONKey, FromJSONKeyFunction(..), ToJSON, ToJSONKey)
 import qualified Data.Aeson as Json
@@ -25,12 +30,17 @@ import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Coerce (coerce)
 import Data.FileEmbed (embedFile, embedFileIfExists)
+import Data.Foldable (for_, traverse_)
 import Data.Functor ((<&>))
 import Data.Int (Int64)
-import Data.List (nub)
+import Data.IntMap (IntMap)
+import qualified Data.IntMap as IntMap
+import Data.List (nub, uncons)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
+import Data.Sequence ((><), Seq, ViewL(..))
+import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -104,6 +114,7 @@ importGraph db = do
       SQLInteger id : (SQLText <$> [hash, nodeType, nodeType <> ":" <> nodeData ])
   Sqlite.batchInsert db "edge" [ "source", "target" ] $
     indexedEdges <&> \(s, t) -> SQLInteger <$> [ s, t ]
+  indexPaths db
   where
     createSchema db = Sqlite.executeStatements db
       [ [ "CREATE TABLE node ("
@@ -121,6 +132,16 @@ importGraph db = do
         , "  PRIMARY KEY (source, target),"
         , "  FOREIGN KEY (source) REFERENCES node(id),"
         , "  FOREIGN KEY (target) REFERENCES node(id)"
+        , ");"
+        ]
+      , [ "CREATE TABLE path ("
+        , "  destination INTEGER,"
+        , "  origin INTEGER,"
+        , "  next INTEGER,"
+        , "  PRIMARY KEY (destination, origin),"
+        , "  FOREIGN KEY (destination) REFERENCES node(id),"
+        , "  FOREIGN KEY (origin) REFERENCES node(id),"
+        , "  FOREIGN KEY (next) REFERENCES node(id)"
         , ");"
         ]
       ]
@@ -207,24 +228,87 @@ findNodes db limit pattern = do
 findPath :: Sqlite.Database -> NodeHash -> NodeHash -> IO [NodeHash]
 findPath db node1 node2 = pure [ node1, NodeHash "111", NodeHash "222", node2 ]
 
+indexPaths :: Sqlite.Database -> IO ()
+indexPaths db = do
+  predecessors <- IntMap.fromAscListWith (++)
+    . (map $ \[ SQLInteger t, SQLInteger s ] -> (fromIntegral t, [ fromIntegral s ]))
+    <$> Sqlite.executeSql db [ "SELECT target, source FROM edge ORDER BY target;" ] []
+
+  let incomingEdges :: Int -> Seq (Int, Int)
+      incomingEdges node = Seq.fromList $ map (node, ) $ fromMaybe [] $ IntMap.lookup node predecessors
+
+      step :: Seq (Int, Int) -> State (IntMap Int) (Seq Int)
+      step frontier = case Seq.viewl frontier of
+        (current, next) :< frontier -> do
+          visited <- gets $ isJust . IntMap.lookup next
+          if visited then step frontier else do
+            modify $ IntMap.insert next current
+            step $ frontier >< incomingEdges next
+        EmptyL -> pure Seq.empty
+
+  Sqlite.executeSql db [ "DELETE FROM path;" ] []
+  indices <- newTVarIO =<< (map $ \[ SQLInteger id ] -> fromIntegral id) <$>
+    Sqlite.executeSql db [ "SELECT id FROM node ORDER BY hash;" ] []
+
+  let nextIndex = atomically $ stateTVar indices $ uncons >>> \case
+        Just (next, remaining) -> (Just next, remaining)
+        Nothing -> (Nothing, [])
+      worker = nextIndex >>= \case
+        Just destination -> do
+          let frontier = incomingEdges destination
+              paths = execState (step frontier) IntMap.empty
+          Sqlite.batchInsert db "path" [ "destination", "origin", "next" ] $ IntMap.assocs paths
+              <&> \(origin, next) -> SQLInteger . fromIntegral <$> [ destination, origin, next ]
+          worker
+        Nothing -> pure ()
+
+  forkIO worker
+  forkIO worker
+  forkIO worker
+  forkIO worker
+  forkIO worker
+  forkIO worker
+
+  let waitLoop = length <$> readTVarIO indices >>= \len ->
+        if len == 0 then pure () else do
+          putStrLn $ show len <> " remaining"
+          threadDelay 5000000
+          waitLoop
+
+  waitLoop
+
 {-
+  queue <- newTQueueIO
+  running <- newTVarIO $ length indices
+-}
 
-        select s.hash, t.hash from edge inner join node as s on edge.source = s.id inner join node as t on edge.target = t.id limit 5;
+{-
+  remaining <- newTVarIO $ length indices
 
-        SELECT s.hash, t.hash FROM edge INNER JOIN node AS s ON edge.source = s.id INNER JOIN node AS t ON edge.target = t.id;
+  for_ (take 1 indices) $ \destination -> forkIO $ do
+    let frontier = incomingEdges destination
+        paths = execState (step frontier) Map.empty
+    putStrLn $ "destination " <> show destination <> ": found paths from " <> show (Map.size paths) <> " nodes"
+    Sqlite.batchInsert db "path" [ "destination", "origin", "next" ] $
+      Map.assocs paths <&> \(origin, next) -> SQLInteger <$> [ destination, origin, next ]
+    atomically $ modifyTVar remaining pred
+    remaining <- atomically $ readTVar remaining
+    putStrLn $ "remaining: " <> show remaining
+-}
 
-
-
-        SELECT s.hash, t.hash FROM edge
-        INNER JOIN node AS s ON edge.source = s.id
-        INNER JOIN node AS t ON edge.target = t.id
-        WHERE s.hash = ?1 OR t.hash = ?1;
-
-
-
-
-
-      [ "SELECT source, target FROM edge WHERE source = ?1 OR target = ?1;" ]
+{-
+    in atomically $ do
+        traverse_ (writeTQueue queue) $ Map.assocs paths
+          <&> \(origin, next) -> SQLInteger <$> [ destination, origin, next ]
+        modifyTVar running pred
+-}
+    
+{-
+  let insertLoop = do
+        (batch, running) <- atomically $ (,) <$> flushTQueue queue <*> readTVar running
+        Sqlite.batchInsert db "path" [ "destination", "origin", "next" ] batch
+        when (running > 0) insertLoop
+  insertLoop
 -}
 
 renderSvg :: Sqlite.Database -> Map NodeHash NodeState -> IO LazyText.Text
@@ -243,7 +327,8 @@ renderSvg db nodeStates = do
                     in if collapsed && (hidden source || hidden target)
                         then [] else [ Edge (NodeHash s) (NodeHash t) ]
           )
-  let nodeIdentityMap = Map.fromList $ map (join (,)) $ Map.keys nodeStates <>
+  let nodeIdentityMap :: Map NodeHash NodeHash
+      nodeIdentityMap = Map.fromList $ map (join (,)) $ Map.keys nodeStates <>
         (edges >>= \(Edge source target) -> [ source, target ])
   nodeMap <- for nodeIdentityMap $ \(NodeHash hash) -> Sqlite.executeSql db
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
@@ -269,6 +354,7 @@ renderSvg db nodeStates = do
   readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
     (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
     (ExitSuccess, svg, _) -> LazyText.fromStrict svg
+
   where
     graphvizNode :: NodeHash -> Node -> Text
     graphvizNode nodeHash@(NodeHash hash) (Node nodeType nodeData) =
@@ -290,11 +376,31 @@ renderSvg db nodeStates = do
                   Nothing -> "Click to show this node."
                 )
               ]
+
     graphvizEdge :: Edge -> Text
     graphvizEdge (Edge (NodeHash source) (NodeHash target)) =
       "    node_" <> source <> " -> node_" <> target <>
       graphvizAttributes [ ("id", source <> "_" <> target) ]
+
     graphvizAttributes :: [(Text, Text)] -> Text
     graphvizAttributes attrs =
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
+
+
+
+
+--  Sqlite.batchInsert db "node" [ "id", "hash", "type", "data" ] $
+--    Map.assocs indexedNodes <&> \(NodeHash hash, (id, Node nodeType nodeData)) ->
+--      SQLInteger id : (SQLText <$> [hash, nodeType, nodeType <> ":" <> nodeData ])
+  
+
+  --let paths = execState (step $ incomingEdges 1397) Map.empty  -- StarlarkBuiltins
+  --let paths = execState (step $ incomingEdges 653) Map.empty
+--  let paths = execState (step $ incomingEdges 7) Map.empty
+--  putStrLn $ "length paths = " <> show (length paths) <> "\n "
+--  for (Map.assocs paths) $ \(x, y) -> putStrLn $ "from " <> show x <> " goto " <> show y
+--
+--  pure ()
+
+-- -- $> withDatabase "/home/ben/.cache/bazel/_bazel_ben/ba67dc5f229eae66a85329faeb16e66d/execroot/skyscope/bazel-out/k8-fastbuild/bin/backend/skyscope.runfiles/skyscope/skyscope8TI9BC/database" Main.indexPaths

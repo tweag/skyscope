@@ -86,7 +86,7 @@ batchInsert :: Database -> Text -> [Text] -> [[SQLData]] -> IO ()
 batchInsert = batchInsertInternal 999 -- 32766
 
 batchInsertInternal :: Int -> Database -> Text -> [Text] -> [[SQLData]] -> IO ()
-batchInsertInternal varLimit database table columns rows = do
+batchInsertInternal varLimit database table columns rows = handleConflict $ do
   let columnCount = length columns
   let rowCount = length rows
   let batchSize = varLimit `div` columnCount

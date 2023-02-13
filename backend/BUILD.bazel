@@ -4,6 +4,7 @@ haskell_toolchain_library(name = "base")
 
 haskell_binary(
     name = "skyscope",
+    compiler_flags = ["-threaded"],
     srcs = [
         ":src/Main.hs",
         ":src/Sqlite.hs",
