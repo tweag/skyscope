@@ -2,6 +2,7 @@
 
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -11,13 +12,14 @@
 module Main where
 
 import Control.Category ((>>>))
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
 import Control.Concurrent.STM (atomically)
-import Control.Concurrent.STM.TQueue (flushTQueue, newTQueueIO, writeTQueue)
-import Control.Concurrent.STM.TVar (modifyTVar, newTVarIO, readTVar, readTVarIO, stateTVar)
-import Control.Monad (join, when)
+import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVarIO, stateTVar, writeTVar)
+import Control.Monad (join)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.State (State, evalState, execState, gets, modify)
+import Control.Monad.RWS (RWS, evalRWS)
+import Control.Monad.RWS.Class
+import Control.Monad.State (State, evalState, execState)
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (FromJSON, FromJSONKey, FromJSONKeyFunction(..), ToJSON, ToJSONKey)
 import qualified Data.Aeson as Json
@@ -25,12 +27,13 @@ import Data.Aeson.Types (toJSONKeyText)
 import qualified Data.Attoparsec.Combinator as Parser
 import Data.Attoparsec.Text (Parser)
 import qualified Data.Attoparsec.Text as Parser
-import Data.Bifunctor (bimap)
+import Data.Bifunctor (bimap, first)
+import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Coerce (coerce)
 import Data.FileEmbed (embedFile, embedFileIfExists)
-import Data.Foldable (for_, traverse_)
+import Data.Foldable (for_)
 import Data.Functor ((<&>))
 import Data.Int (Int64)
 import Data.IntMap (IntMap)
@@ -48,8 +51,13 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import qualified Data.Text.IO as Text
 import qualified Data.Text.Lazy as LazyText
+import qualified Data.Time.Clock as Clock
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData(..))
+import Foreign.C.Types (CInt(..))
+import qualified Foreign.Marshal.Array as Marshal
+import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Storable (sizeOf)
 import GHC.Generics (Generic)
 import qualified Language.Haskell.TH as TH
 import Network.HTTP.Types.Status (badRequest400)
@@ -68,7 +76,23 @@ main = do
   let path = dir <> "/database"
   absolutePath <- getCurrentDirectory <&> (<> ("/" <> path))
   putStrLn $ "\x1b[1;33mdatabase: " <> absolutePath <> "\x1b[0m"
-  Sqlite.withDatabase path $ \db -> importGraph db *> server db
+  Sqlite.withDatabase path $ \db -> do
+    importGraph db
+    progress <- newTVarIO (1, 0)
+    indexStartTime <- Clock.getCurrentTime
+    forkIO $ indexPaths db progress
+    let indexPathProgress = do
+          (done, total) <- readTVarIO progress
+          if done == total then pure () else do
+            timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
+            let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral done)
+                expectedRemaining = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime
+            putStrLn $ "\x1b[1F\x1b[2Kpath indexing: " <> show done <> " / " <> show total
+              <> " (" <> show expectedRemaining <> " seconds remaining)"
+            threadDelay 1000000
+            indexPathProgress
+    forkIO indexPathProgress
+    server db
 
 data Node = Node
   { nodeType :: Text
@@ -97,13 +121,13 @@ data Edge = Edge
 type Graph = (Map NodeHash Node, Set Edge)
 
 importGraph :: Sqlite.Database -> IO ()
-importGraph db = do
+importGraph db = timed "importGraph" $ do
   createSchema db
   (nodes, edges) <- Text.getContents <&> Parser.parseOnly graphParser >>= \case
     Left err -> error $ "failed to parse skyframe graph: " <> err
     Right graph -> pure graph
-  let assignIndex node = modify (+ 1) *> gets (, node)
-      indexedNodes = evalState (for nodes assignIndex) 0
+  let assignIndex node = gets (, node) <* modify (+ 1)
+      indexedNodes = evalState (for nodes assignIndex) 1
       coerceMaybe = fromMaybe $ error "parser produced an edge with an unknown node"
       indexedEdges = coerceMaybe $ for (Set.toList edges) $ \(Edge source target) -> do
         (sourceIndex, _) <- Map.lookup source indexedNodes
@@ -114,7 +138,6 @@ importGraph db = do
       SQLInteger id : (SQLText <$> [hash, nodeType, nodeType <> ":" <> nodeData ])
   Sqlite.batchInsert db "edge" [ "source", "target" ] $
     indexedEdges <&> \(s, t) -> SQLInteger <$> [ s, t ]
-  indexPaths db
   where
     createSchema db = Sqlite.executeStatements db
       [ [ "CREATE TABLE node ("
@@ -135,6 +158,12 @@ importGraph db = do
         , ");"
         ]
       , [ "CREATE TABLE path ("
+        , "  destination INTEGER,"
+        , "  steps BLOB,"
+        , "  PRIMARY KEY (destination)"
+        , ");"
+        ]
+      , [ "CREATE TABLE path2 ("
         , "  destination INTEGER,"
         , "  origin INTEGER,"
         , "  next INTEGER,"
@@ -228,8 +257,77 @@ findNodes db limit pattern = do
 findPath :: Sqlite.Database -> NodeHash -> NodeHash -> IO [NodeHash]
 findPath db node1 node2 = pure [ node1, NodeHash "111", NodeHash "222", node2 ]
 
-indexPaths :: Sqlite.Database -> IO ()
-indexPaths db = do
+foreign import ccall safe "path.h" c_findPath
+  :: CInt -- origin
+  -> CInt -- destination
+  -> Ptr CInt -- stepMap
+  -> CInt -- stepMapSize
+  -> Ptr CInt -- buffer
+  -> CInt -- size
+  -> IO CInt
+
+indexPaths :: Sqlite.Database -> TVar (Int, Int) -> IO ()
+indexPaths db progress = timed "indexPaths" $ do
+  Sqlite.executeSql db [ "DELETE FROM path;" ] []
+  nodeCount <- Sqlite.executeSqlScalar db [ "SELECT COUNT(id) FROM node;" ] [] <&> fromSQLInt
+  atomically $ writeTVar progress (0, nodeCount)
+  predMap <- makePredMap nodeCount
+  let predMapSize = length predMap
+  Marshal.allocaArray predMapSize $ \predMapPtr -> do
+    Marshal.pokeArray predMapPtr $ fromIntegral <$> predMap
+    let stepMapSize = 2 * nodeCount
+    destinations <- newTVarIO [ 1 .. fromIntegral nodeCount ]
+    let nextDest = atomically $ stateTVar destinations $ uncons >>> \case
+          Just (next, remaining) -> (Just next, remaining)
+          Nothing -> (Nothing, [])
+        worker stepMapPtr = nextDest >>= \case
+          Just destination -> do
+            stepMapSize <- fromIntegral <$> Main.c_indexPaths destination
+              predMapPtr (fromIntegral predMapSize)
+              stepMapPtr (fromIntegral stepMapSize)
+            let stepMapSizeBytes = stepMapSize * sizeOf (0 :: CInt)
+            stepMapBytes <- Marshal.peekArray stepMapSizeBytes $ castPtr stepMapPtr
+            Sqlite.executeSql db [ "INSERT INTO path (destination, steps) VALUES (?, ?);" ]
+              [ SQLInteger $ fromIntegral destination, SQLBlob $ BS.pack stepMapBytes ]
+            atomically $ modifyTVar progress $ first (+ 1)
+            worker stepMapPtr
+          Nothing -> pure ()
+    numCaps <- getNumCapabilities
+    for_ [ 1 .. numCaps ] (const $ forkIO $ Marshal.allocaArray stepMapSize worker)
+    let wait = length <$> readTVarIO destinations >>= \len -> if len == 0 then pure () else wait
+    wait
+
+  where
+    makePredMap :: Int -> IO [Int]
+    makePredMap nodeCount = do
+      predecessors <- Sqlite.executeSql db [ "SELECT target, source FROM edge ORDER BY target;" ] []
+        <&> ((map $ \[ t, s ] -> (fromSQLInt t, [ fromSQLInt s ])) >>> IntMap.fromAscListWith (++))
+      pure $ uncurry (++) $ evalRWS (for [ 0 .. nodeCount ] serialisePreds) predecessors 0
+
+    serialisePreds :: Int -> RWS (IntMap [Int]) [Int] Int Int
+    serialisePreds i = asks (IntMap.lookup i) <&> fromMaybe [] >>= \case
+      [ pred ] -> pure pred
+      preds -> do
+        let n = length preds
+        tell $ n : preds
+        offset <- get <* modify (+ (1 + n))
+        pure $ negate offset
+
+    fromSQLInt :: Num a => SQLData -> a
+    fromSQLInt (SQLInteger n) = fromIntegral n
+
+foreign import ccall safe "path.h" c_indexPaths
+  :: CInt -- destination
+  -> Ptr CInt -- predMap
+  -> CInt -- predMapSize
+  -> Ptr CInt -- stepMap
+  -> CInt -- stepMapSize
+  -> IO CInt
+
+--  -- $> withDatabase "/tmp/database" Main.indexPaths
+
+indexPaths2 :: Sqlite.Database -> IO ()
+indexPaths2 db = do
   predecessors <- IntMap.fromAscListWith (++)
     . (map $ \[ SQLInteger t, SQLInteger s ] -> (fromIntegral t, [ fromIntegral s ]))
     <$> Sqlite.executeSql db [ "SELECT target, source FROM edge ORDER BY target;" ] []
@@ -246,7 +344,7 @@ indexPaths db = do
             step $ frontier >< incomingEdges next
         EmptyL -> pure Seq.empty
 
-  Sqlite.executeSql db [ "DELETE FROM path;" ] []
+  Sqlite.executeSql db [ "DELETE FROM path2;" ] []
   indices <- newTVarIO =<< (map $ \[ SQLInteger id ] -> fromIntegral id) <$>
     Sqlite.executeSql db [ "SELECT id FROM node ORDER BY hash;" ] []
 
@@ -257,7 +355,7 @@ indexPaths db = do
         Just destination -> do
           let frontier = incomingEdges destination
               paths = execState (step frontier) IntMap.empty
-          Sqlite.batchInsert db "path" [ "destination", "origin", "next" ] $ IntMap.assocs paths
+          Sqlite.batchInsert db "path2" [ "destination", "origin", "next" ] $ IntMap.assocs paths
               <&> \(origin, next) -> SQLInteger . fromIntegral <$> [ destination, origin, next ]
           worker
         Nothing -> pure ()
@@ -291,7 +389,7 @@ indexPaths db = do
     putStrLn $ "destination " <> show destination <> ": found paths from " <> show (Map.size paths) <> " nodes"
     Sqlite.batchInsert db "path" [ "destination", "origin", "next" ] $
       Map.assocs paths <&> \(origin, next) -> SQLInteger <$> [ destination, origin, next ]
-    atomically $ modifyTVar remaining pred
+    atomically $ ModifyTVar remaining pred
     remaining <- atomically $ readTVar remaining
     putStrLn $ "remaining: " <> show remaining
 -}
@@ -403,4 +501,36 @@ renderSvg db nodeStates = do
 --
 --  pure ()
 
--- -- $> withDatabase "/home/ben/.cache/bazel/_bazel_ben/ba67dc5f229eae66a85329faeb16e66d/execroot/skyscope/bazel-out/k8-fastbuild/bin/backend/skyscope.runfiles/skyscope/skyscope8TI9BC/database" Main.indexPaths
+-- -- -- $> withDatabase "/home/ben/.cache/bazel/_bazel_ben/ba67dc5f229eae66a85329faeb16e66d/execroot/skyscope/bazel-out/k8-fastbuild/bin/backend/skyscope.runfiles/skyscope/skyscope8TI9BC/database" Main.indexPaths
+
+
+
+{-
+
+    select incoming_count, count(*) from (select 10*ceil(count(source)/10) as incoming_count, target from edge group by target order by incoming_count) group by incoming_count;
+
+
+    select count(*) from (select * from (select count(source) as incoming_count, target from edge group by target order by incoming_count) where incoming_count >= 30 and incoming_count < 40);
+
+
+
+
+sqlite> select count(*) from (select * from (select count(source) as incoming_count, target from edge group by target order by incoming_count) where incoming_count = 1);
+46277
+sqlite> select count(*) from (select * from (select count(source) as incoming_count, target from edge group by target order by incoming_count) where incoming_count != 1);
+14930
+
+
+~75% of nodes have only a single incoming edge
+
+-}
+
+
+timed :: String -> IO a -> IO a
+timed label action = do
+  startTime <- Clock.getCurrentTime
+  result <- action
+  endTime <- Clock.getCurrentTime
+  putStrLn $ label <> " took " <> show (Clock.nominalDiffTimeToSeconds $ Clock.diffUTCTime endTime startTime) <> " seconds"
+  pure result
+
