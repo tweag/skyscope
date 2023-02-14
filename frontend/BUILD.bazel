@@ -15,6 +15,7 @@ genrule(
         SPAGO="$$(realpath "$(execpath @spago//:bin/spago)")"
         mkdir -p "$$(dirname "$$INDEX_JS")"
         cd frontend
+        #export GIT_SSL_CAINFO="/nix/store/ciyjhvyfmn6djqkmhiclj258wlffz55y-nss-cacert-3.86/etc/ssl/certs/ca-bundle.crt"
         "$$SPAGO" -c skip bundle-app -t "$$INDEX_JS"
     """,
     visibility = ["//visibility:public"],

@@ -18,7 +18,9 @@ load("@rules_haskell//haskell:cabal.bzl", "stack_snapshot")
 stack_snapshot(
     name = "stackage",
     snapshot = "lts-18.18",
-    extra_deps = {"zlib": ["@zlib.dev//:zlib"]},
+    extra_deps = {
+      "zlib": ["@zlib.dev//:zlib"],
+    },
     packages = [
         "aeson",
         "attoparsec",
@@ -81,8 +83,6 @@ nixpkgs_package(
     build_file = "//backend:zlib.BUILD.bazel",
     repository = "@nixpkgs_21.11",
 )
-
-
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_local_repository")
 

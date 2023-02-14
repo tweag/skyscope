@@ -1,11 +1,15 @@
+*.hi
+*.o
 .*.sw?
 .sw?
 /.spago
 /bazel-*
+/database
 /frontend/.psci_modules/
 /frontend/.spago
 /frontend/index.js
 /frontend/output
 /index.js
 /output
-/database
+/result
+/result-*
