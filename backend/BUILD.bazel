@@ -4,13 +4,18 @@ haskell_toolchain_library(name = "base")
 
 haskell_binary(
     name = "skyscope",
-    compiler_flags = ["-threaded", "-fobject-code"],
+    compiler_flags = [
+      "-O2",
+      "-fno-omit-yields",
+      "-fobject-code",
+      "-fwarn-unused-imports",
+      "-threaded",
+    ],
     srcs = [
         ":src/Main.hs",
         ":src/Sqlite.hs",
     ],
     extra_srcs = [
-        ":src/path.h",
         "//frontend:index.js",
         "//frontend:src/theme.css",
     ],
@@ -45,7 +50,6 @@ haskell_toolchain_library(name = "rts")
 
 cc_library(
   name = "path",
-  hdrs = [":src/path.h"],
-  srcs = [":src/path.c"],
-  deps = [":rts"],
+  copts = ["-g"],
+  srcs = [":src/path.cpp"],
 )
