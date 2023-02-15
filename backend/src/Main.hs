@@ -1,4 +1,4 @@
-{-# OPTIONS_GHC -fwarn-unused-imports #-}
+{-# OPTIONS_GHC  #-}
 
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -19,7 +19,7 @@ import Control.Monad (join)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
-import Control.Monad.State (State, evalState, execState)
+import Control.Monad.State (evalState)
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (FromJSON, FromJSONKey, FromJSONKeyFunction(..), ToJSON, ToJSONKey)
 import qualified Data.Aeson as Json
@@ -41,9 +41,7 @@ import qualified Data.IntMap as IntMap
 import Data.List (nub, uncons)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe, isJust)
-import Data.Sequence ((><), Seq, ViewL(..))
-import qualified Data.Sequence as Seq
+import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -54,7 +52,7 @@ import qualified Data.Text.Lazy as LazyText
 import qualified Data.Time.Clock as Clock
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData(..))
-import Foreign.C.Types (CInt(..))
+import Foreign.C.Types (CInt(..), CLong(..))
 import qualified Foreign.Marshal.Array as Marshal
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf)
@@ -77,19 +75,24 @@ main = do
   absolutePath <- getCurrentDirectory <&> (<> ("/" <> path))
   putStrLn $ "\x1b[1;33mdatabase: " <> absolutePath <> "\x1b[0m"
   Sqlite.withDatabase path $ \db -> do
+    Sqlite.executeStatements db
+      [ [ "pragma journal_mode = WAL;" ]
+      , [ "pragma mmap_size = 1073741824;" ]
+      , [ "pragma synchronous = off;" ]
+      ]
     importGraph db
-    progress <- newTVarIO (1, 0)
+    progress <- newTVarIO (0, 1)
     indexStartTime <- Clock.getCurrentTime
     forkIO $ indexPaths db progress
     let indexPathProgress = do
           (done, total) <- readTVarIO progress
           if done == total then pure () else do
             timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
-            let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral done)
+            let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
                 expectedRemaining = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime
             putStrLn $ "\x1b[1F\x1b[2Kpath indexing: " <> show done <> " / " <> show total
               <> " (" <> show expectedRemaining <> " seconds remaining)"
-            threadDelay 1000000
+            threadDelay 100000
             indexPathProgress
     forkIO indexPathProgress
     server db
@@ -229,7 +232,7 @@ server db = do
       Right pattern -> Web.json =<< liftIO (findNodes db 100 pattern)
       Left err -> badRequest err
     Web.post "/path" $ Json.eitherDecode <$> Web.body >>= \case
-      Right (node1, node2) -> Web.json =<< liftIO (findPath db node1 node2)
+      Right (origin, destination) -> Web.json =<< liftIO (findPath db origin destination)
       Left err -> badRequest err
     Web.post "/render" $ Json.eitherDecode <$> Web.body >>= \case
       Right visibleNodes -> do
@@ -255,12 +258,42 @@ findNodes db limit pattern = do
       (NodeHash hash, Node nodeType nodeData)
 
 findPath :: Sqlite.Database -> NodeHash -> NodeHash -> IO [NodeHash]
-findPath db node1 node2 = pure [ node1, NodeHash "111", NodeHash "222", node2 ]
+findPath db (NodeHash origin) (NodeHash destination) = do
+  let getNodeId hash = Sqlite.executeSqlScalar db
+        [ "SELECT id FROM node WHERE hash = ?;" ]
+        [ SQLText hash ] <&> fromSQLInt
+  origin <- getNodeId origin
+  destination <- getNodeId destination
+  steps <- Sqlite.executeSql db
+    [ "SELECT steps FROM path"
+    , "WHERE destination = ?;" ]
+    [ SQLInteger destination ]
+  case steps of
+    [] -> error $ "no path data for " <> show destination
+    [ [ SQLBlob blob ] ] -> do
+      let bytes = BS.unpack blob
+          stepMapSizeBytes = length bytes
+          stepMapSize = stepMapSizeBytes `div` sizeOf (0 :: CLong)
+      if stepMapSize * sizeOf (0 :: CLong) /= stepMapSizeBytes
+          then error $ "malformed path data for " <> show destination
+          else Marshal.allocaArray stepMapSize $ \stepMapPtr -> do
+            Marshal.pokeArray (castPtr stepMapPtr) bytes
+            let maxPathSize = 1024
+            Marshal.allocaArray maxPathSize $ \pathPtr -> do
+              pathSize <- fromIntegral <$> Main.c_findPath
+                (fromIntegral origin) (fromIntegral destination)
+                stepMapPtr (fromIntegral stepMapSize)
+                pathPtr (fromIntegral maxPathSize)
+              path <- Marshal.peekArray pathSize pathPtr
+              for (fromIntegral <$> path) $ \node -> Sqlite.executeSql db
+                [ "SELECT hash FROM node WHERE id = ?;" ] [ SQLInteger node ] <&> \case
+                  [] -> error $ "failed to find hash for node " <> show node
+                  [ [ SQLText hash ] ] -> NodeHash hash
 
 foreign import ccall safe "path.h" c_findPath
   :: CInt -- origin
   -> CInt -- destination
-  -> Ptr CInt -- stepMap
+  -> Ptr CLong -- stepMap
   -> CInt -- stepMapSize
   -> Ptr CInt -- buffer
   -> CInt -- size
@@ -275,25 +308,27 @@ indexPaths db progress = timed "indexPaths" $ do
   let predMapSize = length predMap
   Marshal.allocaArray predMapSize $ \predMapPtr -> do
     Marshal.pokeArray predMapPtr $ fromIntegral <$> predMap
-    let stepMapSize = 2 * nodeCount
     destinations <- newTVarIO [ 1 .. fromIntegral nodeCount ]
     let nextDest = atomically $ stateTVar destinations $ uncons >>> \case
           Just (next, remaining) -> (Just next, remaining)
           Nothing -> (Nothing, [])
         worker stepMapPtr = nextDest >>= \case
           Just destination -> do
-            stepMapSize <- fromIntegral <$> Main.c_indexPaths destination
+            stepMapSize <- Main.c_indexPaths destination
               predMapPtr (fromIntegral predMapSize)
-              stepMapPtr (fromIntegral stepMapSize)
-            let stepMapSizeBytes = stepMapSize * sizeOf (0 :: CInt)
+              stepMapPtr (fromIntegral nodeCount)
+--            Marshal.allocaArray 256 $ \pathBufferPtr -> if destination /= 57190 then pure () else do
+--              pathSize <- Main.c_findPath 168 57190 stepMapPtr stepMapSize pathBufferPtr 256
+--              putStrLn . show =<< Marshal.peekArray (fromIntegral pathSize) pathBufferPtr
+            let stepMapSizeBytes = fromIntegral stepMapSize * sizeOf (0 :: CLong)
             stepMapBytes <- Marshal.peekArray stepMapSizeBytes $ castPtr stepMapPtr
             Sqlite.executeSql db [ "INSERT INTO path (destination, steps) VALUES (?, ?);" ]
               [ SQLInteger $ fromIntegral destination, SQLBlob $ BS.pack stepMapBytes ]
             atomically $ modifyTVar progress $ first (+ 1)
             worker stepMapPtr
           Nothing -> pure ()
-    numCaps <- getNumCapabilities
-    for_ [ 1 .. numCaps ] (const $ forkIO $ Marshal.allocaArray stepMapSize worker)
+    workerCount <- getNumCapabilities <&> (subtract 1)
+    for_ [ 1 .. workerCount ] (const $ forkIO $ Marshal.allocaArray nodeCount worker)
     let wait = length <$> readTVarIO destinations >>= \len -> if len == 0 then pure () else wait
     wait
 
@@ -313,101 +348,13 @@ indexPaths db progress = timed "indexPaths" $ do
         offset <- get <* modify (+ (1 + n))
         pure $ negate offset
 
-    fromSQLInt :: Num a => SQLData -> a
-    fromSQLInt (SQLInteger n) = fromIntegral n
-
 foreign import ccall safe "path.h" c_indexPaths
   :: CInt -- destination
   -> Ptr CInt -- predMap
   -> CInt -- predMapSize
-  -> Ptr CInt -- stepMap
-  -> CInt -- stepMapSize
+  -> Ptr CLong -- stepMap
+  -> CInt -- nodeCount
   -> IO CInt
-
---  -- $> withDatabase "/tmp/database" Main.indexPaths
-
-indexPaths2 :: Sqlite.Database -> IO ()
-indexPaths2 db = do
-  predecessors <- IntMap.fromAscListWith (++)
-    . (map $ \[ SQLInteger t, SQLInteger s ] -> (fromIntegral t, [ fromIntegral s ]))
-    <$> Sqlite.executeSql db [ "SELECT target, source FROM edge ORDER BY target;" ] []
-
-  let incomingEdges :: Int -> Seq (Int, Int)
-      incomingEdges node = Seq.fromList $ map (node, ) $ fromMaybe [] $ IntMap.lookup node predecessors
-
-      step :: Seq (Int, Int) -> State (IntMap Int) (Seq Int)
-      step frontier = case Seq.viewl frontier of
-        (current, next) :< frontier -> do
-          visited <- gets $ isJust . IntMap.lookup next
-          if visited then step frontier else do
-            modify $ IntMap.insert next current
-            step $ frontier >< incomingEdges next
-        EmptyL -> pure Seq.empty
-
-  Sqlite.executeSql db [ "DELETE FROM path2;" ] []
-  indices <- newTVarIO =<< (map $ \[ SQLInteger id ] -> fromIntegral id) <$>
-    Sqlite.executeSql db [ "SELECT id FROM node ORDER BY hash;" ] []
-
-  let nextIndex = atomically $ stateTVar indices $ uncons >>> \case
-        Just (next, remaining) -> (Just next, remaining)
-        Nothing -> (Nothing, [])
-      worker = nextIndex >>= \case
-        Just destination -> do
-          let frontier = incomingEdges destination
-              paths = execState (step frontier) IntMap.empty
-          Sqlite.batchInsert db "path2" [ "destination", "origin", "next" ] $ IntMap.assocs paths
-              <&> \(origin, next) -> SQLInteger . fromIntegral <$> [ destination, origin, next ]
-          worker
-        Nothing -> pure ()
-
-  forkIO worker
-  forkIO worker
-  forkIO worker
-  forkIO worker
-  forkIO worker
-  forkIO worker
-
-  let waitLoop = length <$> readTVarIO indices >>= \len ->
-        if len == 0 then pure () else do
-          putStrLn $ show len <> " remaining"
-          threadDelay 5000000
-          waitLoop
-
-  waitLoop
-
-{-
-  queue <- newTQueueIO
-  running <- newTVarIO $ length indices
--}
-
-{-
-  remaining <- newTVarIO $ length indices
-
-  for_ (take 1 indices) $ \destination -> forkIO $ do
-    let frontier = incomingEdges destination
-        paths = execState (step frontier) Map.empty
-    putStrLn $ "destination " <> show destination <> ": found paths from " <> show (Map.size paths) <> " nodes"
-    Sqlite.batchInsert db "path" [ "destination", "origin", "next" ] $
-      Map.assocs paths <&> \(origin, next) -> SQLInteger <$> [ destination, origin, next ]
-    atomically $ ModifyTVar remaining pred
-    remaining <- atomically $ readTVar remaining
-    putStrLn $ "remaining: " <> show remaining
--}
-
-{-
-    in atomically $ do
-        traverse_ (writeTQueue queue) $ Map.assocs paths
-          <&> \(origin, next) -> SQLInteger <$> [ destination, origin, next ]
-        modifyTVar running pred
--}
-    
-{-
-  let insertLoop = do
-        (batch, running) <- atomically $ (,) <$> flushTQueue queue <*> readTVar running
-        Sqlite.batchInsert db "path" [ "destination", "origin", "next" ] batch
-        when (running > 0) insertLoop
-  insertLoop
--}
 
 renderSvg :: Sqlite.Database -> Map NodeHash NodeState -> IO LazyText.Text
 renderSvg db nodeStates = do
@@ -485,6 +432,25 @@ renderSvg db nodeStates = do
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
 
+fromSQLInt :: Num a => SQLData -> a
+fromSQLInt (SQLInteger n) = fromIntegral n
+
+------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+timed :: String -> IO a -> IO a
+timed label action = do
+  startTime <- Clock.getCurrentTime
+  result <- action
+  endTime <- Clock.getCurrentTime
+  putStrLn $ label <> " took " <> show (Clock.nominalDiffTimeToSeconds $ Clock.diffUTCTime endTime startTime) <> " seconds"
+  pure result
+
+
+
 
 
 
@@ -526,11 +492,88 @@ sqlite> select count(*) from (select * from (select count(source) as incoming_co
 -}
 
 
-timed :: String -> IO a -> IO a
-timed label action = do
-  startTime <- Clock.getCurrentTime
-  result <- action
-  endTime <- Clock.getCurrentTime
-  putStrLn $ label <> " took " <> show (Clock.nominalDiffTimeToSeconds $ Clock.diffUTCTime endTime startTime) <> " seconds"
-  pure result
+{-
+indexPaths2 :: Sqlite.Database -> IO ()
+indexPaths2 db = do
+  predecessors <- IntMap.fromAscListWith (++)
+    . (map $ \[ SQLInteger t, SQLInteger s ] -> (fromIntegral t, [ fromIntegral s ]))
+    <$> Sqlite.executeSql db [ "SELECT target, source FROM edge ORDER BY target;" ] []
+
+  let incomingEdges :: Int -> Seq (Int, Int)
+      incomingEdges node = Seq.fromList $ map (node, ) $ fromMaybe [] $ IntMap.lookup node predecessors
+
+      step :: Seq (Int, Int) -> State (IntMap Int) (Seq Int)
+      step frontier = case Seq.viewl frontier of
+        (current, next) :< frontier -> do
+          visited <- gets $ isJust . IntMap.lookup next
+          if visited then step frontier else do
+            modify $ IntMap.insert next current
+            step $ frontier >< incomingEdges next
+        EmptyL -> pure Seq.empty
+
+  Sqlite.executeSql db [ "DELETE FROM path2;" ] []
+  indices <- newTVarIO =<< (map $ \[ SQLInteger id ] -> fromIntegral id) <$>
+    Sqlite.executeSql db [ "SELECT id FROM node ORDER BY hash;" ] []
+
+  let nextIndex = atomically $ stateTVar indices $ uncons >>> \case
+        Just (next, remaining) -> (Just next, remaining)
+        Nothing -> (Nothing, [])
+      worker = nextIndex >>= \case
+        Just destination -> do
+          let frontier = incomingEdges destination
+              paths = execState (step frontier) IntMap.empty
+          Sqlite.batchInsert db "path2" [ "destination", "origin", "next" ] $ IntMap.assocs paths
+              <&> \(origin, next) -> SQLInteger . fromIntegral <$> [ destination, origin, next ]
+          worker
+        Nothing -> pure ()
+
+  forkIO worker
+  forkIO worker
+  forkIO worker
+  forkIO worker
+  forkIO worker
+  forkIO worker
+
+  let waitLoop = length <$> readTVarIO indices >>= \len ->
+        if len == 0 then pure () else do
+          putStrLn $ show len <> " remaining"
+          threadDelay 5000000
+          waitLoop
+
+  waitLoop
+-}
+
+{-
+  queue <- newTQueueIO
+  running <- newTVarIO $ length indices
+-}
+
+{-
+  remaining <- newTVarIO $ length indices
+
+  for_ (take 1 indices) $ \destination -> forkIO $ do
+    let frontier = incomingEdges destination
+        paths = execState (step frontier) Map.empty
+    putStrLn $ "destination " <> show destination <> ": found paths from " <> show (Map.size paths) <> " nodes"
+    Sqlite.batchInsert db "path" [ "destination", "origin", "next" ] $
+      Map.assocs paths <&> \(origin, next) -> SQLInteger <$> [ destination, origin, next ]
+    atomically $ ModifyTVar remaining pred
+    remaining <- atomically $ readTVar remaining
+    putStrLn $ "remaining: " <> show remaining
+-}
+
+{-
+    in atomically $ do
+        traverse_ (writeTQueue queue) $ Map.assocs paths
+          <&> \(origin, next) -> SQLInteger <$> [ destination, origin, next ]
+        modifyTVar running pred
+-}
+    
+{-
+  let insertLoop = do
+        (batch, running) <- atomically $ (,) <$> flushTQueue queue <*> readTVar running
+        Sqlite.batchInsert db "path" [ "destination", "origin", "next" ] batch
+        when (running > 0) insertLoop
+  insertLoop
+-}
 
