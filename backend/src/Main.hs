@@ -261,32 +261,33 @@ findPath db (NodeHash origin) (NodeHash destination) = do
   case steps of
     [] -> error $ "no path data for " <> show destination
     [ [ SQLBlob blob ] ] -> do
-      let bytes = BS.unpack blob
-          stepMapSizeBytes = length bytes
+      let stepMapBytes = BS.unpack blob
+          stepMapSizeBytes = length stepMapBytes
           stepMapSize = stepMapSizeBytes `div` sizeOf (0 :: CLong)
       if stepMapSize * sizeOf (0 :: CLong) /= stepMapSizeBytes
-          then error $ "malformed path data for " <> show destination
+          then error $ "misaligned path data for " <> show destination
           else Marshal.allocaArray stepMapSize $ \stepMapPtr -> do
-            Marshal.pokeArray (castPtr stepMapPtr) bytes
-            let maxPathSize = 1024
-            Marshal.allocaArray maxPathSize $ \pathPtr -> do
-              pathSize <- fromIntegral <$> Main.c_findPath
+            Marshal.pokeArray (castPtr stepMapPtr) stepMapBytes
+            let maxLength = 1048576 -- 4MiB
+            Marshal.allocaArray maxLength $ \pathPtr -> do
+              actualLength <- fromIntegral <$> Main.c_findPath
                 (fromIntegral origin) (fromIntegral destination)
                 stepMapPtr (fromIntegral stepMapSize)
-                pathPtr (fromIntegral maxPathSize)
-              path <- Marshal.peekArray pathSize pathPtr
-              for (fromIntegral <$> path) $ \node -> Sqlite.executeSql db
-                [ "SELECT hash FROM node WHERE id = ?;" ] [ SQLInteger node ] <&> \case
-                  [] -> error $ "failed to find hash for node " <> show node
-                  [ [ SQLText hash ] ] -> NodeHash hash
+                pathPtr (fromIntegral maxLength)
+              if actualLength == -1 then error "exceeded max path length" else do
+                path <- Marshal.peekArray actualLength pathPtr
+                for (fromIntegral <$> path) $ \node -> Sqlite.executeSql db
+                  [ "SELECT hash FROM node WHERE id = ?;" ] [ SQLInteger node ] <&> \case
+                    [] -> error $ "failed to find hash for node " <> show node
+                    [ [ SQLText hash ] ] -> NodeHash hash
 
 foreign import ccall safe "path.h" c_findPath
   :: CInt -- origin
   -> CInt -- destination
   -> Ptr CLong -- stepMap
   -> CInt -- stepMapSize
-  -> Ptr CInt -- buffer
-  -> CInt -- size
+  -> Ptr CInt -- pathBuffer
+  -> CInt -- maxLength
   -> IO CInt
 
 indexPaths :: Sqlite.Database -> TVar (Int, Int) -> IO ()
