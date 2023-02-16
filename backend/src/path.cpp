@@ -61,12 +61,12 @@ extern "C" int32_t c_indexPaths(
     auto pushPreds = [&](int32_t node) {
         auto predecessor = predMap[node];
         if (predecessor > 0) {
-            frontier.push(make_pair(predecessor, node));
+            frontier.push({ predecessor, node });
         } else {
             auto offset = abs(predecessor);
             auto preds = predMapIndirect + offset;
             for (int i = 1; i <= preds[0]; ++i) {
-                frontier.push(make_pair(preds[i], node));
+                frontier.push({ preds[i], node });
             }
         }
     };

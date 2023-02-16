@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -19,7 +20,7 @@ import Control.Monad (join)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
-import Control.Monad.State (evalState)
+import Control.Monad.State (State, evalState)
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (FromJSON, FromJSONKey, FromJSONKeyFunction(..), ToJSON, ToJSONKey)
 import qualified Data.Aeson as Json
@@ -35,14 +36,15 @@ import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Coerce (coerce)
 import Data.FileEmbed (embedFile, embedFileIfExists)
 import Data.Foldable (for_)
+import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Int (Int64)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.List (nub, uncons)
+import Data.List (nub, sortBy, uncons)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -53,6 +55,7 @@ import qualified Data.Text.Lazy as LazyText
 import qualified Data.Time.Clock as Clock
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData(..))
+import Debug.Trace (trace)
 import Foreign.C.Types (CInt(..), CLong(..))
 import qualified Foreign.Marshal.Array as Marshal
 import Foreign.Ptr (Ptr, castPtr)
@@ -85,17 +88,16 @@ main = do
     progress <- newTVarIO (0, 1)
     indexStartTime <- Clock.getCurrentTime
     forkIO $ indexPaths db progress
-    let indexPathProgress = do
+    let showProgress = do
+          threadDelay 100_000
           (done, total) <- readTVarIO progress
-          if done == total then pure () else do
-            timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
-            let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
-                expectedRemaining = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime
-            putStrLn $ "\x1b[1F\x1b[2Kindexing paths to " <> show done <> " / " <> show total
-              <> " nodes (" <> show expectedRemaining <> " seconds remaining)"
-            threadDelay 100000
-            indexPathProgress
-    forkIO indexPathProgress
+          timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
+          let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
+              expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime
+          putStrLn $ "\x1b[1F\x1b[2Kindexed paths to " <> show done <> " nodes (of " <>
+              show total <> " total, " <> show expectedTime <> " seconds remaining)"
+          if done == total then pure () else showProgress
+    forkIO showProgress
     server db
 
 data Node = Node
@@ -372,7 +374,7 @@ renderSvg db nodeStates = do
   nodeMap <- for nodeIdentityMap $ \(NodeHash hash) -> Sqlite.executeSql db
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
-  links <- findLinks db nodeMap
+  links <- findPathLinks db edges $ Map.keysSet nodeStates 
 
   let graph = Text.unlines
         [ "digraph {"
@@ -439,14 +441,101 @@ renderSvg db nodeStates = do
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
 
-findLinks :: Sqlite.Database -> Map NodeHash Node -> IO [(Edge, Int)]
-findLinks db _ = pure
-  [ (Edge
-      (NodeHash "e2f4994c487d67f3f31ec811178ba4bbc6f2add3cf48a0c2982801f41658bebc")
-      (NodeHash "f307777884f3e174a91e18f9ab3f4bfdd7c74d6cc20619e6ba0545b879a6bd76")
-    , 19
-    )
-  ]
+data Component = Component
+  { initials :: Set NodeHash
+  , terminals :: Set NodeHash
+  } deriving Show
+
+findComponents :: [Edge] -> Set NodeHash -> [Component]
+findComponents edges visibleNodes =
+  let neighbourMap = flip Map.restrictKeys visibleNodes
+        $ Map.fromAscListWith (++) $ sortBy (compare `on` fst)
+        $ edges >>= \(Edge s t) -> [ (s, [ t ]), (t, [ s ]) ]
+      sources = Set.fromList $ edges >>= \(Edge s t) ->
+        if t `Set.member` visibleNodes then [ s ] else []
+      targets = Set.fromList $ edges >>= \(Edge s t) ->
+        if s `Set.member` visibleNodes then [ t ] else []
+
+      findComponent :: State (Set NodeHash) (Maybe Component)
+      findComponent = do
+        unvisitedNodes <- gets $ Set.difference visibleNodes
+        case Set.lookupMin unvisitedNodes of
+          Nothing -> pure Nothing
+          Just node -> do
+            nodes <- Set.fromList <$> dfs [ [ node ] ]
+                <&> (`Set.intersection` visibleNodes)
+            let initials = nodes `Set.difference` targets
+                terminals = nodes `Set.difference` sources
+            pure $ Just $ Component initials terminals
+
+      dfs :: [[NodeHash]] -> State (Set NodeHash) [NodeHash]
+      dfs = \case
+        [] -> pure []
+        [] : stack -> dfs stack
+        (next : siblings) : stack -> do
+          let stack' = siblings : stack
+          visited <- gets $ Set.member next
+          if visited then dfs stack' else do
+            modify $ Set.insert next
+            case Map.lookup next neighbourMap of
+              Just neighbours -> (next :) <$> dfs (neighbours : stack')
+              Nothing -> dfs stack'
+
+  in catMaybes
+      $ takeWhile isJust
+      $ flip evalState Set.empty
+      $ sequenceA $ repeat findComponent
+
+
+  -- 1. Find connected components.
+  -- 2. Pick two components A and B.
+  -- 3. Check for a path between all initial-terminal pairs.
+  --    a. If a path is found a link edge should be added and the components unified.
+  --       Continue from 2 until only a single component remains.
+  --    b. If no path is found, keep A fixed but try another component as B.
+  --       Eventually, if A has no paths to any of the other components then
+  --       remove it from the set of components under consideration.
+
+{-
+
+-  predecessors <- IntMap.fromAscListWith (++)
+-    . (map $ \[ SQLInteger t, SQLInteger s ] -> (fromIntegral t, [ fromIntegral s ]))
+-    <$> Sqlite.executeSql db [ "SELECT target, source FROM edge ORDER BY target;" ] []
+-
+-  let incomingEdges :: Int -> Seq (Int, Int)
+-      incomingEdges node = Seq.fromList $ map (node, ) $ fromMaybe [] $ IntMap.lookup node predecessors
+-
+-      step :: Seq (Int, Int) -> State (IntMap Int) (Seq Int)
+-      step frontier = case Seq.viewl frontier of
+-        (current, next) :< frontier -> do
+-          visited <- gets $ isJust . IntMap.lookup next
+-          if visited then step frontier else do
+-            modify $ IntMap.insert next current
+-            step $ frontier >< incomingEdges next
+-        EmptyL -> pure Seq.empty
+
+
+-}
+
+findPathLinks :: Sqlite.Database -> [Edge] -> Set NodeHash -> IO [(Edge, Int)]
+findPathLinks db edges visibleNodes = do
+  let components = findComponents edges visibleNodes
+  putStrLn "\x1b[2JfindComponents:\n"
+  for_ ([ 0 .. ] `zip` components) $ \(i, Component initials terminals) -> do
+    putStrLn $ "  \x1b[1;" <> show (31 + i `mod` 7) <> "mCOMPONENT:"
+    putStrLn "    initials:"
+    for_ initials $ \(NodeHash hash) -> putStrLn $ "     " <> Text.unpack hash
+    putStrLn "    terminals:"
+    for_ terminals $ \(NodeHash hash) -> putStrLn $ "     " <> Text.unpack hash
+    putStrLn "\x1b[0m"
+
+  pure
+    [ (Edge
+        (NodeHash "e2f4994c487d67f3f31ec811178ba4bbc6f2add3cf48a0c2982801f41658bebc")
+        (NodeHash "f307777884f3e174a91e18f9ab3f4bfdd7c74d6cc20619e6ba0545b879a6bd76")
+      , 19
+      )
+    ]
 
 fromSQLInt :: Num a => SQLData -> a
 fromSQLInt (SQLInteger n) = fromIntegral n
@@ -458,3 +547,6 @@ timed label action = do
   endTime <- Clock.getCurrentTime
   putStrLn $ "\n\n" <> label <> " took " <> show (Clock.nominalDiffTimeToSeconds $ Clock.diffUTCTime endTime startTime) <> " seconds\n"
   pure result
+
+traceValue :: Show a => String -> a -> a
+traceValue label x = trace (label <> " = " <> show x) x
