@@ -3,12 +3,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <queue>
 #include <unistd.h>
 #include <vector>
-
-#define MAX_NODE_COUNT = 0x100000
 
 using namespace std;
 
@@ -29,23 +26,14 @@ extern "C" int32_t c_findPath(
     assert(sizeof(stepMapBegin[0]) == sizeof(stepMap[0]));
     auto stepMapEnd = stepMapBegin + stepMapSize;
 
-    cout << "c_findPath: origin = " << origin << ", destination = " << destination
-        << ", stepMapBegin = " << stepMapBegin << ", stepMapEnd = " << stepMapEnd << endl;
-    for (int i = 0; i < stepMapSize; ++i) {
-        auto entry = stepMapBegin[i];
-        cout << "    key = " << entry.key << ", value = " << entry.value << endl;
-    }
-
     vector<int32_t> path = { origin };
 
     while (path.back() != destination) {
-        cerr << "c_findPath: node = " << path.back() << endl;
         auto cmp = [](StepMapEntry entry, int32_t node) {
             return entry.key < node;
         };
         auto iter = lower_bound(stepMapBegin, stepMapEnd, path.back(), cmp);
         if (iter == stepMapEnd || iter->key != path.back()) {
-            cerr << "iter = " << iter << ", stepMapEnd = " << stepMapEnd << ", iter->key = " << iter->key << ", iter->value = " << iter->value << endl;
             return 0;
         }
         path.push_back(iter->value);
@@ -59,7 +47,6 @@ extern "C" int32_t c_findPath(
 extern "C" int32_t c_indexPaths(
     int32_t destination,
     const int32_t* predMap,
-    int32_t predMapSize,  // unnecessary, remove
     int64_t* stepMap,
     int32_t nodeCount
 ) {
@@ -91,20 +78,13 @@ extern "C" int32_t c_indexPaths(
     }
 
     int32_t stepMapSize = 0;
-    for (size_t i = 0; i < steps.size(); i++) {
+    for (size_t i = 0; i < steps.size(); ++i) {
         if (steps.at(i) != 0) {
-            const auto entry = StepMapEntry { i, steps.at(i) };
-            *reinterpret_cast<StepMapEntry*>(stepMap++) = entry;
-            stepMapSize++;
+            *reinterpret_cast<StepMapEntry*>(stepMap++) =
+                StepMapEntry { int32_t(i), steps.at(i) };
+            ++stepMapSize;
         }
     }
 
     return stepMapSize;
 }
-
-//    steps[1] = 2;
-//    steps[2] = 3;
-//    steps[3] = 4;
-//    steps[4] = 5;
-//    steps[5] = 6;
-

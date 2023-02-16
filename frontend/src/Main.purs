@@ -22,8 +22,7 @@ import Data.HTTP.Method as HTTP.Method
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Number as Number
 import Data.Show as Show
-import Data.String (replaceAll, split)
-import Data.String (toLower, toUpper)
+import Data.String (replaceAll, split, toLower, toUpper)
 import Data.String.CodeUnits as String
 import Data.String.Pattern (Pattern(..), Replacement(..))
 import Data.String.Regex as Regex
@@ -52,8 +51,8 @@ import Foreign.Object as Object
 import Prelude
 import Record as Record
 import Signal (Signal)
-import Signal as Signal
-import Signal.Channel as Signal
+import Signal (runSignal) as Signal
+import Signal.Channel (channel, send, subscribe) as Signal
 import Signal.Effect as Signal
 import Type.Proxy (Proxy(..))
 import Unsafe.Coerce (unsafeCoerce)
@@ -88,7 +87,7 @@ main = do
 
 load :: Effect Unit
 load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
-  Nothing -> Console.error "html <body> element not found"
+  Nothing -> error "html <body> element not found"
   Just bodyElement -> do
     nodeConfiguration <- makeNodeConfiguration
     let body = HTMLElement.toElement bodyElement
@@ -130,17 +129,18 @@ makeNodeConfiguration = do
       jsonState = Argonaut.fromString <<< Show.show
   pure { onChange, get, show, hide, visible, json }
 
-data ToolMode
-  = Explore
-  | Crop
-  | Path
-  | Find
+data Click
+  = NodeClick Element
+  | PathClick Element
 
-type NodeClickHandler a = Element -> MouseEvent -> Effect a
+type ClickHandler a = Click -> MouseEvent -> Effect a
 
-makeTools :: Element -> NodeConfiguration -> Effect (NodeClickHandler Boolean)
+makeTools :: Element -> NodeConfiguration -> Effect (ClickHandler Boolean)
 makeTools graph nodeConfiguration = do
-  handlers <- sequence [ makeCrop ]
+  handlers <- sequence
+    [ makeCrop
+    , makeOpenPath
+    ]
   pure \element event ->
     let tryTools handlers = case Array.uncons handlers of
           Just { head: handler, tail: handlers} -> do
@@ -151,7 +151,7 @@ makeTools graph nodeConfiguration = do
      in tryTools handlers
 
   where
-    makeCrop :: Effect (NodeClickHandler Boolean)
+    makeCrop :: Effect (ClickHandler Boolean)
     makeCrop = do
       active <- Ref.new false
       selection <- Ref.new Object.empty
@@ -175,36 +175,73 @@ makeTools graph nodeConfiguration = do
           nodeConfiguration.visible >>= traverse_
             \hash -> if hash `Object.member` selection
               then pure unit else nodeConfiguration.hide hash
-      pure \node event -> Ref.read active >>= not >>> if _ then pure false else do
-        hash <- Element.id node
-        let toggle = case _ of
-              Just _ -> Nothing
-              Nothing -> Just Collapsed
-        Ref.modify_ (Object.alter toggle hash) selection
-        updateDOM
-        pure true
+      pure \click event -> Ref.read active >>= not >>> if _ then pure false else
+        case click of
+          NodeClick node -> do
+            hash <- Element.id node
+            let toggle = case _ of
+                  Just _ -> Nothing
+                  Nothing -> Just Collapsed
+            Ref.modify_ (Object.alter toggle hash) selection
+            updateDOM
+            pure true
+          _ -> pure false
+
+    makeOpenPath :: Effect (ClickHandler Boolean)
+    makeOpenPath = pure \click event -> case click of
+      PathClick edge -> Element.id edge <#> split (Pattern "_") >>= case _ of
+        [ origin, destination ] -> true <$ runAff do
+            result <- Affjax.post Affjax.ResponseFormat.json "/path"
+              $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray
+              [ Argonaut.fromString origin
+              , Argonaut.fromString destination
+              ]
+            case result of
+              Right response -> case join $ Argonaut.toArray response.body <#> traverse Argonaut.toString of
+                Just path -> liftEffect $ for_ (outsideInOrder path) $ flip nodeConfiguration.show Collapsed
+                Nothing -> error "unexpected path results json"
+              Left err -> error $ Affjax.printError err
+        _ -> error "malformed edge id"
+      _ -> pure false
 
     nodes :: Effect (Array Element)
     nodes = getElementsByClassName "node" graph
 
-attachGraphRenderer :: Element -> NodeConfiguration -> NodeClickHandler Boolean -> Effect Unit
-attachGraphRenderer graph nodeConfiguration onClickNode = do
+outsideInOrder :: forall a. Array a -> Array a
+outsideInOrder a = if Array.length a `mod` 2 == 0
+  then case Array.unsnoc a of
+    Just { init, last } -> [ last ] <> outsideInOrder init
+    Nothing -> a
+  else case Array.uncons a of
+    Just { head, tail } -> [ head ] <> outsideInOrder tail
+    Nothing -> a
+
+{-
+      let arr = [ 1, 2, 3, 4, 5, 6, 7, 8, 9 ]
+      if outsideInOrder arr == [ 1, 9, 2, 8, 3, 7, 4, 6, 5 ] then pure unit
+        else error ("outsideInOrder " <> show arr <> " = " <> show (outsideInOrder arr))
+-}
+
+attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler Boolean -> Effect Unit
+attachGraphRenderer graph nodeConfiguration onClick = do
   render <- makeRenderer nodeConfiguration
   nodeConfiguration.onChange \changedNodeHash ->
     runAff $ render >>= \svg -> liftEffect do
-      decorateGraph svg \element event -> do
-        handled <- onClickNode element event
-        if handled then pure unit else do
-          hash <- Element.id element
-          if MouseEvent.ctrlKey event
-            then nodeConfiguration.hide hash
-            else containsClass element "Expanded" >>= if _
-              then nodeConfiguration.show hash Collapsed
-              else nodeConfiguration.show hash Expanded
+      decorateGraph svg \click event -> do
+        handled <- onClick click event
+        if handled then pure unit else case click of
+          NodeClick element -> do
+            hash <- Element.id element
+            if MouseEvent.ctrlKey event
+              then nodeConfiguration.hide hash
+              else containsClass element "Expanded" >>= if _
+                then nodeConfiguration.show hash Collapsed
+                else nodeConfiguration.show hash Expanded
+          _ -> pure unit
       removeAllChildren graph
       appendElement svg graph
       for_ changedNodeHash $ getElementById >=> case _ of
-        Nothing -> Console.error "can't find changed node"
+        Nothing -> error "can't find changed node"
         Just element -> do
            addClass element "Changed"
            void $ Timer.setTimeout animationDuration do
@@ -224,12 +261,11 @@ attachGraphRenderer graph nodeConfiguration onClickNode = do
             Nothing -> error "svg element not found"
             Just svg -> pure svg
 
-    decorateGraph :: Element -> NodeClickHandler Unit -> Effect Unit
-    decorateGraph svg onClickNode = do
-      getElementsByClassName "edge" svg >>= traverse_ animateFadeIn
+    decorateGraph :: Element -> ClickHandler Unit -> Effect Unit
+    decorateGraph svg onClick = do
       getElementsByClassName "node" svg >>= traverse_ \node -> do
         listener <- EventTarget.eventListener \event ->
-          for_ (MouseEvent.fromEvent event) (onClickNode node)
+          for_ (MouseEvent.fromEvent event) (onClick $ NodeClick node)
         EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget node
         hash <- Element.id node
         deconstructNodeElement node >>= case _ of
@@ -248,6 +284,13 @@ attachGraphRenderer graph nodeConfiguration onClickNode = do
             pure unit
           _ -> pure unit
         animateNodeTranslation node
+      getElementsByClassName "edge" svg >>= traverse_ \edge -> do
+        containsClass edge "Path" >>= not >>> if _ then pure unit else do
+          listener <- EventTarget.eventListener \event ->
+            for_ (MouseEvent.fromEvent event) (onClick $ PathClick edge)
+          EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget edge
+        animateFadeIn edge
+    
 
     animateNodeTranslation :: Element -> Effect Unit
     animateNodeTranslation newNode = do
@@ -255,14 +298,14 @@ attachGraphRenderer graph nodeConfiguration onClickNode = do
            attr name elem = MaybeT $ (Number.fromString =<< _) <$> Element.getAttribute name elem
            centerOf :: Element -> MaybeT Effect (Number /\ Number)
            centerOf = deconstructNodeElement >>> liftEffect >=> case _ of
-             Nothing -> MaybeT $ Nothing <$ Console.error "failed to deconstruct node element"
+             Nothing -> MaybeT $ Nothing <$ error "failed to deconstruct node element"
              Just (VisibleNode vn) -> Tuple <$> attr "x" vn.nodeType <*> attr "y" vn.nodeType
              Just (HiddenNode hn) -> Tuple <$> attr "cx" hn.background <*> attr "cy" hn.background
        hash <- Element.id newNode
        getElementById hash >>= case _ of
          Nothing -> animateFadeIn newNode
          Just oldNode -> runMaybeT (sub <$> centerOf oldNode <*> centerOf newNode) >>= case _ of
-           Nothing -> Console.error "unable to determine translation delta"
+           Nothing -> error "unable to determine translation delta"
            Just (dx /\ dy) -> do
              let from = show dx <> " " <> show dy
                  duration = show animationDuration <> "ms"
@@ -407,7 +450,7 @@ createSearchBox nodeConfiguration = do
               nodeData <- Argonaut.toString =<< Object.lookup "nodeData" node
               pure $ nodeType /\ nodeData
         in case node of
-              Nothing -> Console.error "unexpected node json"
+              Nothing -> error "unexpected find node json"
               Just (nodeType /\ nodeData) -> do
                 row <- createElement "div" "" $ Just searchResults
                 let updateSelected = nodeConfiguration.get hash >>= case _ of
@@ -440,7 +483,7 @@ createSearchBox nodeConfiguration = do
             escapeRegex = Regex.replace (Regex.unsafeRegex
               "[.*+?^${}()|[\\]\\\\]" Regex.global) "\\$&"
         in case Regex.match regex nodeData <#> Array.NonEmpty.drop 1 of
-            Nothing -> Console.error "nodeData did not match regex"
+            Nothing -> error "nodeData did not match regex"
             Just matches ->
               let matchCount = Array.length matches
                   indices = Array.range 0 matchCount
@@ -465,7 +508,7 @@ createSearchBox nodeConfiguration = do
               nodes <- Argonaut.toObject =<< array !! 1
               pure $ total /\ nodes
         in case results of
-              Nothing -> error "unexpected results json"
+              Nothing -> error "unexpected find results json"
               Just (total /\ nodes) -> liftEffect $
                 renderResults total nodes pattern
 

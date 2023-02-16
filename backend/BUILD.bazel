@@ -4,13 +4,6 @@ haskell_toolchain_library(name = "base")
 
 haskell_binary(
     name = "skyscope",
-    compiler_flags = [
-      "-O2",
-      "-fno-omit-yields",
-      "-fobject-code",
-      "-fwarn-unused-imports",
-      "-threaded",
-    ],
     srcs = [
         ":src/Main.hs",
         ":src/Sqlite.hs",
@@ -44,12 +37,22 @@ haskell_binary(
         "@stackage//:unix",
         "@stackage//:zlib",
     ],
+    compiler_flags = [
+      "-O2",
+      "-fno-omit-yields",
+      #"-Wall",  # TODO: Fix warnings
+      "-fwarn-unused-imports",
+      "-threaded",
+    ],
 )
 
-haskell_toolchain_library(name = "rts")
-
 cc_library(
-  name = "path",
-  copts = ["-g"],
-  srcs = [":src/path.cpp"],
+    name = "path",
+    srcs = [":src/path.cpp"],
+    copts = [
+        "-O2",
+        "-Wall",
+        "-Werror",
+        "-std=c++17",
+    ],
 )
