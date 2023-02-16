@@ -13,8 +13,8 @@ module Main where
 
 import Control.Category ((>>>))
 import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
-import Control.Concurrent.STM (atomically)
-import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVarIO, stateTVar, writeTVar)
+import Control.Concurrent.STM (atomically, retry)
+import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVar, readTVarIO, stateTVar, writeTVar)
 import Control.Monad (join)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.RWS (RWS, evalRWS)
@@ -28,6 +28,7 @@ import qualified Data.Attoparsec.Combinator as Parser
 import Data.Attoparsec.Text (Parser)
 import qualified Data.Attoparsec.Text as Parser
 import Data.Bifunctor (bimap, first)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
@@ -248,38 +249,44 @@ findNodes db limit pattern = do
       (NodeHash hash, Node nodeType nodeData)
 
 findPath :: Sqlite.Database -> NodeHash -> NodeHash -> IO [NodeHash]
-findPath db (NodeHash origin) (NodeHash destination) = do
-  let getNodeId hash = Sqlite.executeSqlScalar db
-        [ "SELECT id FROM node WHERE hash = ?;" ]
-        [ SQLText hash ] <&> fromSQLInt
-  origin <- getNodeId origin
-  destination <- getNodeId destination
-  steps <- Sqlite.executeSql db
-    [ "SELECT steps FROM path"
-    , "WHERE destination = ?;" ]
-    [ SQLInteger destination ]
-  case steps of
-    [] -> error $ "no path data for " <> show destination
-    [ [ SQLBlob blob ] ] -> do
-      let stepMapBytes = BS.unpack blob
-          stepMapSizeBytes = length stepMapBytes
-          stepMapSize = stepMapSizeBytes `div` sizeOf (0 :: CLong)
-      if stepMapSize * sizeOf (0 :: CLong) /= stepMapSizeBytes
-          then error $ "misaligned path data for " <> show destination
-          else Marshal.allocaArray stepMapSize $ \stepMapPtr -> do
-            Marshal.pokeArray (castPtr stepMapPtr) stepMapBytes
-            let maxLength = 1048576 -- 4MiB
-            Marshal.allocaArray maxLength $ \pathPtr -> do
-              actualLength <- fromIntegral <$> Main.c_findPath
-                (fromIntegral origin) (fromIntegral destination)
-                stepMapPtr (fromIntegral stepMapSize)
-                pathPtr (fromIntegral maxLength)
-              if actualLength == -1 then error "exceeded max path length" else do
-                path <- Marshal.peekArray actualLength pathPtr
-                for (fromIntegral <$> path) $ \node -> Sqlite.executeSql db
-                  [ "SELECT hash FROM node WHERE id = ?;" ] [ SQLInteger node ] <&> \case
-                    [] -> error $ "failed to find hash for node " <> show node
-                    [ [ SQLText hash ] ] -> NodeHash hash
+findPath db (NodeHash origin) (NodeHash destination) = selecting $ \origin destination steps -> do
+  let stepMapBytes = BS.unpack steps
+      stepMapSizeBytes = length stepMapBytes
+      stepMapSize = stepMapSizeBytes `div` sizeOf (0 :: CLong)
+  if stepMapSize * sizeOf (0 :: CLong) /= stepMapSizeBytes
+      then error $ "misaligned path data for " <> show destination
+      else Marshal.allocaArray stepMapSize $ \stepMapPtr -> do
+        Marshal.pokeArray (castPtr stepMapPtr) stepMapBytes
+        let maxLength = 1048576 -- 4MiB
+        Marshal.allocaArray maxLength $ \pathPtr -> do
+          actualLength <- fromIntegral <$> Main.c_findPath
+            (fromIntegral origin) (fromIntegral destination)
+            stepMapPtr (fromIntegral stepMapSize)
+            pathPtr (fromIntegral maxLength)
+          if actualLength == -1 then error "exceeded max path length" else do
+            path <- Marshal.peekArray actualLength pathPtr
+            for (fromIntegral <$> path) $ \node -> Sqlite.executeSql db
+              [ "SELECT hash FROM node WHERE id = ?;" ] [ SQLInteger node ] <&> \case
+                [] -> error $ "failed to find hash for path node " <> show node
+                [ [ SQLText hash ] ] -> NodeHash hash
+
+  where
+    selecting :: (Int64 -> Int64 -> ByteString -> IO a) -> IO a
+    selecting action = do
+      origin <- getNodeId origin
+      destination <- getNodeId destination
+      steps <- Sqlite.executeSql db
+        [ "SELECT steps FROM path"
+        , "WHERE destination = ?;" ]
+        [ SQLInteger destination ]
+      case steps of
+        [] -> error $ "no path data for " <> show destination
+        [ [ SQLBlob steps ] ] -> action origin destination steps
+
+    getNodeId :: Text -> IO Int64
+    getNodeId hash = Sqlite.executeSqlScalar db
+      [ "SELECT id FROM node WHERE hash = ?;" ]
+      [ SQLText hash ] <&> \(SQLInteger n) -> n
 
 foreign import ccall safe "path.h" c_findPath
   :: CInt -- origin
@@ -305,9 +312,7 @@ indexPaths db progress = timed "indexPaths" $ do
           Nothing -> (Nothing, [])
         worker stepMapPtr = nextDest >>= \case
           Just destination -> do
-            stepMapSize <- Main.c_indexPaths destination
-              predMapPtr
-              stepMapPtr (fromIntegral nodeCount)
+            stepMapSize <- Main.c_indexPaths predMapPtr destination (fromIntegral nodeCount) stepMapPtr
             let stepMapSizeBytes = fromIntegral stepMapSize * sizeOf (0 :: CLong)
             stepMapBytes <- Marshal.peekArray stepMapSizeBytes $ castPtr stepMapPtr
             Sqlite.executeSql db [ "INSERT INTO path (destination, steps) VALUES (?, ?);" ]
@@ -316,14 +321,15 @@ indexPaths db progress = timed "indexPaths" $ do
             worker stepMapPtr
           Nothing -> pure ()
     workerCount <- getNumCapabilities <&> (subtract 1)
-    for_ [ 1 .. max 1 workerCount ] (const $ forkIO $ Marshal.allocaArray nodeCount worker)
-    let wait = length <$> readTVarIO destinations >>= \len -> if len == 0 then pure () else wait
+    for_ [ 1 .. max 1 workerCount ] $ const $ forkIO $ Marshal.allocaArray nodeCount worker
+    let wait = atomically $ do
+          remaining <- length <$> readTVar destinations
+          if remaining > 0 then retry else pure ()
     wait
 
   where
     makePredMap :: Int -> IO [Int]
-    makePredMap nodeCount = do
-      -- TODO: Document the rationale behind this cache-friendly data structure.
+    makePredMap nodeCount = do -- TODO: Document the rationale behind this cache-friendly data structure.
       predecessors <- Sqlite.executeSql db [ "SELECT target, source FROM edge ORDER BY target;" ] []
         <&> ((map $ \[ t, s ] -> (fromSQLInt t, [ fromSQLInt s ])) >>> IntMap.fromAscListWith (++))
       pure $ uncurry (++) $ evalRWS (for [ 0 .. nodeCount ] serialisePreds) predecessors 0
@@ -338,10 +344,10 @@ indexPaths db progress = timed "indexPaths" $ do
         pure $ negate offset
 
 foreign import ccall safe "path.h" c_indexPaths
-  :: CInt -- destination
-  -> Ptr CInt -- predMap
-  -> Ptr CLong -- stepMap
+  :: Ptr CInt -- predMap
+  -> CInt -- destination
   -> CInt -- nodeCount
+  -> Ptr CLong -- stepMap
   -> IO CInt
 
 renderSvg :: Sqlite.Database -> Map NodeHash NodeState -> IO LazyText.Text
@@ -349,8 +355,8 @@ renderSvg db nodeStates = do
   edges <- fmap (nub . concat) $ flip Map.traverseWithKey nodeStates $
     \(NodeHash hash) state -> Sqlite.executeSql db
       [ "SELECT s.hash, t.hash FROM edge"
-      , "INNER JOIN node AS s ON edge.source = s.id"
-      , "INNER JOIN node AS t ON edge.target = t.id"
+      , "INNER JOIN node AS s ON s.id = edge.source"
+      , "INNER JOIN node AS t ON t.id = edge.target"
       , "WHERE s.hash = ?1 OR t.hash = ?1;" ] [ SQLText hash ]
       <&> (>>= \[ SQLText s, SQLText t ] ->
                     let source = NodeHash s
@@ -367,6 +373,7 @@ renderSvg db nodeStates = do
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
   links <- findLinks db nodeMap
+
   let graph = Text.unlines
         [ "digraph {"
         , "    pad=10"
