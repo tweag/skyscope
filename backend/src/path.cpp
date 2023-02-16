@@ -19,8 +19,8 @@ extern "C" int32_t c_findPath(
     int32_t destination,
     const int64_t* stepMap,
     int32_t stepMapSize,
-    int32_t* buffer,
-    int32_t size
+    int32_t* pathBuffer,
+    int32_t maxLength
 ) {
     auto stepMapBegin = reinterpret_cast<const StepMapEntry*>(stepMap);
     assert(sizeof(stepMapBegin[0]) == sizeof(stepMap[0]));
@@ -39,9 +39,13 @@ extern "C" int32_t c_findPath(
         path.push_back(iter->value);
     }
 
-    int32_t actualSize = min(int32_t(path.size()), size);
-    memcpy(buffer, path.data(), sizeof(int32_t) * actualSize);
-    return actualSize;
+    auto actualLength = int32_t(path.size());
+    if (actualLength > maxLength) {
+        return -1;
+    }
+
+    memcpy(pathBuffer, path.data(), actualLength * sizeof(int32_t));
+    return actualLength;
 }
 
 extern "C" int32_t c_indexPaths(

@@ -216,12 +216,6 @@ outsideInOrder a = if Array.length a `mod` 2 == 0
     Just { head, tail } -> [ head ] <> outsideInOrder tail
     Nothing -> a
 
-{-
-      let arr = [ 1, 2, 3, 4, 5, 6, 7, 8, 9 ]
-      if outsideInOrder arr == [ 1, 9, 2, 8, 3, 7, 4, 6, 5 ] then pure unit
-        else error ("outsideInOrder " <> show arr <> " = " <> show (outsideInOrder arr))
--}
-
 attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler Boolean -> Effect Unit
 attachGraphRenderer graph nodeConfiguration onClick = do
   render <- makeRenderer nodeConfiguration
