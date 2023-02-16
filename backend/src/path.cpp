@@ -49,10 +49,10 @@ extern "C" int32_t c_findPath(
 }
 
 extern "C" int32_t c_indexPaths(
-    int32_t destination,
     const int32_t* predMap,
-    int64_t* stepMap,
-    int32_t nodeCount
+    int32_t destination,
+    int32_t nodeCount,
+    int64_t* stepMap
 ) {
     vector<int32_t> steps(nodeCount + 1);
     queue<pair<int32_t, int32_t>> frontier;
