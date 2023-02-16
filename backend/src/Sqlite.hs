@@ -18,12 +18,8 @@ module Sqlite
 import Control.Exception (Exception, bracket, catchJust, throw)
 import Control.Monad (when)
 import Data.Bifunctor (first)
-import Data.Coerce (coerce)
 import Data.Foldable (for_)
-import Data.Functor (($>))
 import Data.Int (Int64)
-import Data.Monoid (Ap(..))
-import Data.String (IsString(..))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock (addUTCTime, getCurrentTime)
@@ -31,7 +27,6 @@ import Database.SQLite3 (Database, Error(..), SQLData(..), SQLError(..), Stateme
 import qualified Database.SQLite3 as SQLite3
 import GHC.Stack (HasCallStack)
 import Prelude
-import System.Environment (lookupEnv)
 
 withDatabase :: FilePath -> (Database -> IO ()) -> IO ()
 withDatabase path application =
@@ -90,7 +85,6 @@ batchInsertInternal varLimit database table columns rows = handleConflict $ do
   let columnCount = length columns
   let rowCount = length rows
   let batchSize = varLimit `div` columnCount
-  let (batchCount, remainderCount) = rowCount `divMod` batchSize
   let commaSep n = Text.intercalate ", " . replicate n
   let withInsertRows n f = flip (withStatement database) f $ Text.unlines
         [ "INSERT INTO " <> table <> "(" <> Text.intercalate ", " columns <> ")"
