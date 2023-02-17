@@ -12,19 +12,19 @@
 
 module Main where
 
+import Control.Arrow ((&&&))
 import Control.Category ((>>>))
 import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
 import Control.Concurrent.STM (atomically, retry)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVar, readTVarIO, stateTVar, writeTVar)
-import Control.Monad (join)
+import Control.Monad (join, guard)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
 import Control.Monad.State (State, evalState)
 import qualified Crypto.Hash.SHA256 as SHA256
-import Data.Aeson (FromJSON, FromJSONKey, FromJSONKeyFunction(..), ToJSON, ToJSONKey)
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Json
-import Data.Aeson.Types (toJSONKeyText)
 import qualified Data.Attoparsec.Combinator as Parser
 import Data.Attoparsec.Text (Parser)
 import qualified Data.Attoparsec.Text as Parser
@@ -33,18 +33,18 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
-import Data.Coerce (coerce)
 import Data.FileEmbed (embedFile, embedFileIfExists)
 import Data.Foldable (for_)
-import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Int (Int64)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.List (nub, sortBy, uncons)
+import Data.List (nub, sortOn, tails, uncons)
+import Data.List.NonEmpty (nonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe, isJust)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -68,17 +68,20 @@ import qualified Sqlite
 import System.Directory (getCurrentDirectory)
 import System.Exit (ExitCode(..))
 import System.FilePath.Find ((~~?), filePath, find)
+import System.IO (hSetEncoding, stdout, utf8)
 import System.Posix.Temp (mkdtemp)
+import System.Process (readProcess)
 import System.Process.Text (readProcessWithExitCode)
 import qualified Web.Scotty as Web
 
 main :: IO ()
 main = do
+  hSetEncoding stdout utf8
   dir <- mkdtemp "skyscope"
-  let path = dir <> "/database"
-  absolutePath <- getCurrentDirectory <&> (<> ("/" <> path))
-  putStrLn $ "\x1b[1;33mdatabase: " <> absolutePath <> "\x1b[0m"
-  Sqlite.withDatabase path $ \db -> do
+  let dbPath = dir <> "/skyscope.sqlite"
+  absolutePath <- getCurrentDirectory <&> (<> ("/" <> dbPath))
+  putStrLn $ "\x1b[1mimporting graph:\x1b[0;30m " <> absolutePath <> "\x1b[0m"
+  Sqlite.withDatabase dbPath $ \db -> do
     Sqlite.executeStatements db
       [ [ "pragma journal_mode = WAL;" ]
       , [ "pragma mmap_size = 1073741824;" ]
@@ -94,9 +97,14 @@ main = do
           timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
           let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
               expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime
-          putStrLn $ "\x1b[1F\x1b[2Kindexed paths to " <> show done <> " nodes (of " <>
-              show total <> " total, " <> show expectedTime <> " seconds remaining)"
-          if done == total then pure () else showProgress
+              ansi = if done < total then "37" else "32"
+          putStrLn $ "\x1b[1F\x1b[2K\x1b[" <> ansi <> "mindexed paths to "
+              <> show done <> " nodes (" <> show total <> " total, "
+              <> show expectedTime <> " seconds remaining)\x1b[0m"
+          if done < total then showProgress else do
+              dbSize <- readProcess "bash" [ "-c", "sync; ls -sh " <> dbPath <> " | grep -Po '^\\w+'" ] ""
+              putStrLn $ "  time taken = " <> show timeTaken <> " seconds"
+              putStrLn $ "  database size = " <> dbSize
     forkIO showProgress
     server db
 
@@ -105,14 +113,7 @@ data Node = Node
   , nodeData :: Text
   } deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-newtype NodeHash = NodeHash Text
-  deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
-
-instance FromJSONKey NodeHash where
-  fromJSONKey = FromJSONKeyCoerce
-
-instance ToJSONKey NodeHash where
-  toJSONKey = toJSONKeyText coerce
+type NodeHash = Text
 
 data NodeState
   = Collapsed
@@ -139,19 +140,20 @@ importGraph db = timed "importGraph" $ do
         (sourceIndex, _) <- Map.lookup source indexedNodes
         (targetIndex, _) <- Map.lookup target indexedNodes
         pure (sourceIndex, targetIndex)
-  Sqlite.batchInsert db "node" [ "id", "hash", "type", "data" ] $
-    Map.assocs indexedNodes <&> \(NodeHash hash, (id, Node nodeType nodeData)) ->
-      SQLInteger id : (SQLText <$> [hash, nodeType, nodeType <> ":" <> nodeData ])
+  Sqlite.batchInsert db "node" [ "idx", "hash", "type", "data" ] $
+    Map.assocs indexedNodes <&> \(nodeHash, (nodeIdx, Node nodeType nodeData)) ->
+      SQLInteger nodeIdx : (SQLText <$> [nodeHash, nodeType, nodeType <> ":" <> nodeData ])
   Sqlite.batchInsert db "edge" [ "source", "target" ] $
     indexedEdges <&> \(s, t) -> SQLInteger <$> [ s, t ]
+
   where
     createSchema db = Sqlite.executeStatements db
       [ [ "CREATE TABLE node ("
-        , "  id INTEGER,"
+        , "  idx INTEGER,"
         , "  hash TEXT,"
         , "  type TEXT,"
         , "  data TEXT,"
-        , "  PRIMARY KEY (id),"
+        , "  PRIMARY KEY (idx),"
         , "  UNIQUE (hash)"
         , ");"
         ]
@@ -159,14 +161,15 @@ importGraph db = timed "importGraph" $ do
         , "  source INTEGER,"
         , "  target INTEGER,"
         , "  PRIMARY KEY (source, target),"
-        , "  FOREIGN KEY (source) REFERENCES node(id),"
-        , "  FOREIGN KEY (target) REFERENCES node(id)"
+        , "  FOREIGN KEY (source) REFERENCES node(idx),"
+        , "  FOREIGN KEY (target) REFERENCES node(idx)"
         , ");"
         ]
       , [ "CREATE TABLE path ("
         , "  destination INTEGER,"
         , "  steps BLOB,"
-        , "  PRIMARY KEY (destination)"
+        , "  PRIMARY KEY (destination),"
+        , "  FOREIGN KEY (destination) REFERENCES node(idx)"
         , ");"
         ]
       ]
@@ -191,13 +194,13 @@ graphParser = do
       Parser.char ':'
       nodeData <- Parser.takeTill $ \c -> c == '|' || c == '\n'
       Parser.option undefined $ Parser.char '|'
-      let nodeHash = NodeHash $ Text.decodeUtf8 $ LBSC.toStrict $ toLazyByteString $
+      let nodeHash = Text.decodeUtf8 $ LBSC.toStrict $ toLazyByteString $
             byteStringHex $ SHA256.hash $ Text.encodeUtf8 $ nodeType <> ":" <> nodeData
       pure (nodeHash, Node nodeType nodeData)
 
 server :: Sqlite.Database -> IO ()
 server db = do
-  putStrLn $ "\nOpen this link in your browser: \x1b[1;36mhttp://localhost:28581/\x1b[0m\n"
+  putStrLn $ "\nOpen this link in your browser: 🔭 \x1b[1;36mhttp://localhost:28581/\x1b[0m\n"
   Web.scotty 28581 $ do
     Web.get "/" $ do
       Web.html $ LazyText.fromStrict $ Text.unlines
@@ -249,10 +252,10 @@ findNodes db limit pattern = do
     [ SQLText pattern, SQLInteger limit ]
   pure . (total, ) $ Map.fromList $ records <&> \
     [ SQLText hash, SQLText nodeType, SQLText nodeData ] ->
-      (NodeHash hash, Node nodeType nodeData)
+      (hash, Node nodeType nodeData)
 
 findPath :: Sqlite.Database -> NodeHash -> NodeHash -> IO [NodeHash]
-findPath db (NodeHash origin) (NodeHash destination) = selecting $ \origin destination steps -> do
+findPath db origin destination = selecting $ \origin destination steps -> do
   let stepMapBytes = BS.unpack steps
       stepMapSizeBytes = length stepMapBytes
       stepMapSize = stepMapSizeBytes `div` sizeOf (0 :: CLong)
@@ -260,7 +263,7 @@ findPath db (NodeHash origin) (NodeHash destination) = selecting $ \origin desti
       then error $ "misaligned path data for " <> show destination
       else Marshal.allocaArray stepMapSize $ \stepMapPtr -> do
         Marshal.pokeArray (castPtr stepMapPtr) stepMapBytes
-        let maxLength = 1048576 -- 4MiB
+        let maxLength = 1048576 -- 4MiB of int32_t
         Marshal.allocaArray maxLength $ \pathPtr -> do
           actualLength <- fromIntegral <$> Main.c_findPath
             (fromIntegral origin) (fromIntegral destination)
@@ -268,16 +271,16 @@ findPath db (NodeHash origin) (NodeHash destination) = selecting $ \origin desti
             pathPtr (fromIntegral maxLength)
           if actualLength == -1 then error "exceeded max path length" else do
             path <- Marshal.peekArray actualLength pathPtr
-            for (fromIntegral <$> path) $ \node -> Sqlite.executeSql db
-              [ "SELECT hash FROM node WHERE id = ?;" ] [ SQLInteger node ] <&> \case
-                [] -> error $ "failed to find hash for path node " <> show node
-                [ [ SQLText hash ] ] -> NodeHash hash
+            for (fromIntegral <$> path) $ \nodeIdx -> Sqlite.executeSql db
+              [ "SELECT hash FROM node WHERE idx = ?;" ] [ SQLInteger nodeIdx ] <&> \case
+                [] -> error $ "failed to find hash for path node " <> show nodeIdx
+                [ [ SQLText nodeHash ] ] -> nodeHash
 
   where
     selecting :: (Int64 -> Int64 -> ByteString -> IO a) -> IO a
     selecting action = do
-      origin <- getNodeId origin
-      destination <- getNodeId destination
+      origin <- getNodeIdx origin
+      destination <- getNodeIdx destination
       steps <- Sqlite.executeSql db
         [ "SELECT steps FROM path"
         , "WHERE destination = ?;" ]
@@ -286,12 +289,12 @@ findPath db (NodeHash origin) (NodeHash destination) = selecting $ \origin desti
         [] -> error $ "no path data for " <> show destination
         [ [ SQLBlob steps ] ] -> action origin destination steps
 
-    getNodeId :: Text -> IO Int64
-    getNodeId hash = Sqlite.executeSqlScalar db
-      [ "SELECT id FROM node WHERE hash = ?;" ]
+    getNodeIdx :: Text -> IO Int64
+    getNodeIdx hash = Sqlite.executeSqlScalar db
+      [ "SELECT idx FROM node WHERE hash = ?;" ]
       [ SQLText hash ] <&> \(SQLInteger n) -> n
 
-foreign import ccall safe "path.h" c_findPath
+foreign import ccall safe "path.cpp" c_findPath
   :: CInt -- origin
   -> CInt -- destination
   -> Ptr CLong -- stepMap
@@ -301,9 +304,9 @@ foreign import ccall safe "path.h" c_findPath
   -> IO CInt
 
 indexPaths :: Sqlite.Database -> TVar (Int, Int) -> IO ()
-indexPaths db progress = timed "indexPaths" $ do
+indexPaths db progress = do
   Sqlite.executeSql db [ "DELETE FROM path;" ] []
-  nodeCount <- Sqlite.executeSqlScalar db [ "SELECT COUNT(id) FROM node;" ] [] <&> fromSQLInt
+  nodeCount <- Sqlite.executeSqlScalar db [ "SELECT COUNT(idx) FROM node;" ] [] <&> fromSQLInt
   atomically $ writeTVar progress (0, nodeCount)
   predMap <- makePredMap nodeCount
   let predMapSize = length predMap
@@ -332,7 +335,7 @@ indexPaths db progress = timed "indexPaths" $ do
 
   where
     makePredMap :: Int -> IO [Int]
-    makePredMap nodeCount = do -- TODO: Document the rationale behind this cache-friendly data structure.
+    makePredMap nodeCount = do
       predecessors <- Sqlite.executeSql db [ "SELECT target, source FROM edge ORDER BY target;" ] []
         <&> ((map $ \[ t, s ] -> (fromSQLInt t, [ fromSQLInt s ])) >>> IntMap.fromAscListWith (++))
       pure $ uncurry (++) $ evalRWS (for [ 0 .. nodeCount ] serialisePreds) predecessors 0
@@ -346,7 +349,7 @@ indexPaths db progress = timed "indexPaths" $ do
         offset <- get <* modify (+ (1 + n))
         pure $ negate offset
 
-foreign import ccall safe "path.h" c_indexPaths
+foreign import ccall safe "path.cpp" c_indexPaths
   :: Ptr CInt -- predMap
   -> CInt -- destination
   -> CInt -- nodeCount
@@ -356,30 +359,28 @@ foreign import ccall safe "path.h" c_indexPaths
 renderSvg :: Sqlite.Database -> Map NodeHash NodeState -> IO LazyText.Text
 renderSvg db nodeStates = do
   edges <- fmap (nub . concat) $ flip Map.traverseWithKey nodeStates $
-    \(NodeHash hash) state -> Sqlite.executeSql db
+    \nodeHash state -> Sqlite.executeSql db
       [ "SELECT s.hash, t.hash FROM edge"
-      , "INNER JOIN node AS s ON s.id = edge.source"
-      , "INNER JOIN node AS t ON t.id = edge.target"
-      , "WHERE s.hash = ?1 OR t.hash = ?1;" ] [ SQLText hash ]
-      <&> (>>= \[ SQLText s, SQLText t ] ->
-                    let source = NodeHash s
-                        target = NodeHash t
-                        collapsed = state == Collapsed
+      , "INNER JOIN node AS s ON s.idx = edge.source"
+      , "INNER JOIN node AS t ON t.idx = edge.target"
+      , "WHERE s.hash = ?1 OR t.hash = ?1;" ] [ SQLText nodeHash ]
+      <&> (>>= \[ SQLText source, SQLText target ] ->
+                    let collapsed = state == Collapsed
                         hidden  = (`Map.notMember` nodeStates)
                     in if collapsed && (hidden source || hidden target)
-                        then [] else [ Edge (NodeHash s) (NodeHash t) ]
+                        then [] else [ Edge source target ]
           )
   let nodeIdentityMap :: Map NodeHash NodeHash
       nodeIdentityMap = Map.fromList $ map (join (,)) $ Map.keys nodeStates <>
         (edges >>= \(Edge source target) -> [ source, target ])
-  nodeMap <- for nodeIdentityMap $ \(NodeHash hash) -> Sqlite.executeSql db
-    [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
+  nodeMap <- for nodeIdentityMap $ \nodeHash -> Sqlite.executeSql db
+    [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText nodeHash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
   links <- findPathLinks db nodeStates edges
 
   let graph = Text.unlines
         [ "digraph {"
-        , "    pad=10"
+        , "    pad=2"
         , "    node" <> graphvizAttributes
                 [ ("color", "#efefef")
                 , ("penwidth", "0.2")
@@ -393,15 +394,15 @@ renderSvg db nodeStates = do
         , Text.unlines $ uncurry graphvizNode <$> Map.assocs nodeMap
         , Text.unlines $ graphvizEdge [] <$> edges
         , Text.unlines $
-            let tooltip n =  "Click here to show " <> Text.pack (show n) <> " hidden nodes."
-            in links <&> \(edge, n) -> graphvizEdge
+            let tooltip hiddenCount = "Click here to show " <> Text.pack (show hiddenCount) <> " hidden nodes."
+            in links <&> \(hiddenCount, edge) -> graphvizEdge
                 [ ("arrowhead", "none")
                 , ("class", "Path")
                 , ("label", "Open path")
-                , ("labeltooltip", tooltip n)
+                , ("labeltooltip", tooltip hiddenCount)
                 , ("penwidth", "1.0")
                 , ("style", "dotted")
-                , ("tooltip", tooltip n)
+                , ("tooltip", tooltip hiddenCount)
                 ] edge
         , "}"
         ]
@@ -412,18 +413,18 @@ renderSvg db nodeStates = do
 
   where
     graphvizNode :: NodeHash -> Node -> Text
-    graphvizNode nodeHash@(NodeHash hash) (Node nodeType nodeData) =
+    graphvizNode nodeHash (Node nodeType nodeData) =
       let truncatedNodeData = Text.take 8192 nodeData
           label = nodeType <> "\\n" <> truncatedNodeData
           nodeState = Map.lookup nodeHash nodeStates
           hidden = nodeState == Nothing
-      in "    node_" <> hash <> graphvizAttributes
+      in "    node_" <> nodeHash <> graphvizAttributes
               [ ("width", if hidden then "0.1" else "3.0")
               , ("height", if hidden then "0.1" else "0.6")
               , ("shape", if hidden then "point" else "box")
               , ("fixedsize", "true")
               , ("label", label)
-              , ("id", hash)
+              , ("id", nodeHash)
               , ("class", Text.pack $ fromMaybe "" $ show <$> nodeState)
               , ("tooltip", truncatedNodeData <> "\n\n" <> case nodeState of
                   Just Expanded -> "Click to collapse this node and hide its edges. Hold CTRL and click to hide it entirely."
@@ -433,7 +434,7 @@ renderSvg db nodeStates = do
               ]
 
     graphvizEdge :: [(Text, Text)] -> Edge -> Text
-    graphvizEdge attrs (Edge (NodeHash source) (NodeHash target)) =
+    graphvizEdge attrs (Edge source target) =
       "    node_" <> source <> " -> node_" <> target <>
       graphvizAttributes (attrs ++ [ ("id", source <> "_" <> target) ])
 
@@ -442,24 +443,18 @@ renderSvg db nodeStates = do
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
 
-data Component = Component
-  { initials :: [NodeHash]
-  , terminals :: [NodeHash]
-  } deriving Show
+type Component = Set NodeHash
 
-instance Semigroup Component where
-  Component initialsL terminalsL <> Component initialsR terminalsR
-    = Component (nub $ initialsL <> initialsR) (nub $ terminalsL <> terminalsR)
+findPathLinks :: Sqlite.Database -> Map NodeHash NodeState -> [Edge] -> IO [(Int, Edge)]
+findPathLinks db nodeStates edges = timed "findPathLinks" $ nub <$> do
+  let components = findComponents edges $ Map.keysSet nodeStates
+      pairs = concat [ [ (c1, c2), (c2, c1) ] | c1 : cs <- tails components, c2 <- cs ] -- m² pairs
+  fmap catMaybes $ for pairs $ uncurry $ unifyComponents db nodeStates
 
 findComponents :: [Edge] -> Set NodeHash -> [Component]
 findComponents edges visibleNodes =
-  let neighbourMap = flip Map.restrictKeys visibleNodes
-        $ Map.fromAscListWith (++) $ sortBy (compare `on` fst)
-        $ edges >>= \(Edge s t) -> [ (s, [ t ]), (t, [ s ]) ]
-      sources = Set.fromList $ edges >>= \(Edge s t) ->
-        if t `Set.member` visibleNodes then [ s ] else []
-      targets = Set.fromList $ edges >>= \(Edge s t) ->
-        if s `Set.member` visibleNodes then [ t ] else []
+  let neighbourMap = flip Map.union (Map.fromSet (const []) visibleNodes) $ flip Map.restrictKeys visibleNodes
+        $ Map.fromAscListWith (++) $ sortOn fst $ edges >>= \(Edge s t) -> [ (s, [ t ]), (t, [ s ]) ]
 
       findComponent :: State (Set NodeHash) (Maybe Component)
       findComponent = do
@@ -469,11 +464,7 @@ findComponents edges visibleNodes =
           Just node -> do
             nodes <- Set.fromList <$> dfs [ [ node ] ]
                 <&> (`Set.intersection` visibleNodes)
-            let initials = nodes `Set.difference` targets
-                terminals = nodes `Set.difference` sources
-            pure $ Just $ Component
-              (Set.toList initials)
-              (Set.toList terminals)
+            pure $ Just nodes
 
       dfs :: [[NodeHash]] -> State (Set NodeHash) [NodeHash]
       dfs = \case
@@ -493,53 +484,30 @@ findComponents edges visibleNodes =
       $ flip evalState Set.empty
       $ sequenceA $ repeat findComponent
 
-unifyComponents :: Sqlite.Database -> Map NodeHash NodeState -> Component -> Component -> IO (Maybe (Edge, Int))
-unifyComponents db nodeStates lhs rhs = do
-  let pairs = concat
-        [ (,) <$> terminals lhs <*> initials rhs
-        , (,) <$> terminals rhs <*> initials lhs
-        ]
-      find = \case
-        [] -> pure Nothing
-        (origin, destination) : pairs -> do
-          path <- findPath db origin destination
-          if null path then find pairs else pure $
-            let dropCount node = case Map.lookup node nodeStates of
-                  Nothing -> error "invariant violation"
-                  Just Collapsed -> 0
-                  Just Expanded -> 1
-                dropFront = dropCount $ head path
-                dropBack = dropCount $ last path
-                source = head $ drop dropFront path
-                target = head $ drop dropBack $ reverse path
-            in if source == target then Nothing else
-                Just (Edge source target, length path - 2)
-  find pairs
+unifyComponents :: Sqlite.Database -> Map NodeHash NodeState -> Component -> Component -> IO (Maybe (Int, Edge))
+unifyComponents db nodeStates c1 c2 = timed "unifyComponents" $ do
+  let unify (origin, destination) =
+        findPath db origin destination <&> \path ->
+          let pathState = (id &&& flip Map.lookup nodeStates) <$> path
+              hiddenCount = length $ filter (isNothing . snd) pathState
+              shortenPath path = nonEmpty =<< dropExpanded <$> nonEmpty path
+              dropExpanded = NE.filter $ snd >>> (/= Just Expanded)
+              edge = shortenPath pathState >>= \p -> do
+                let source = fst $ NE.head p
+                    target = fst $ NE.last p
+                guard $ source /= target
+                pure $ Edge source target
+          in sequenceA (hiddenCount, edge)
+      shortest = listToMaybe . sortOn snd . catMaybes
+  fmap shortest $ sequenceA $ fmap unify $ (,) <$> Set.toList c1 <*> Set.toList c2
 
-findPathLinks :: Sqlite.Database -> Map NodeHash NodeState -> [Edge] -> IO [(Edge, Int)]
-findPathLinks db nodeStates edges = nub <$> do
-  let links :: [Component] -> IO [(Edge, Int)]
-      links = \case
-        lhs : rhs : components -> unifyComponents db nodeStates lhs rhs >>= \case
-          Nothing -> (<>)
-            <$> links (lhs : components)
-            <*> links (rhs : components)
-          Just link -> (link :)
-            <$> links (lhs <> rhs : components)
-        _ -> pure []
-      components = findComponents edges $ Map.keysSet nodeStates
-
-
-  putStrLn "\x1b[2JfindComponents:\n"
-  for_ ([ 0 .. ] `zip` components) $ \(i, Component initials terminals) -> do
+printComponents :: [Component] -> IO ()
+printComponents components = do
+  putStrLn "\x1b[1;1H\x1b[2JfindComponents:\n"
+  for_ ([ 0 .. ] `zip` components) $ \(i, nodes) -> do
     putStrLn $ "  \x1b[1;" <> show (31 + i `mod` 7) <> "mCOMPONENT:"
-    putStrLn "    initials:"
-    for_ initials $ \(NodeHash hash) -> putStrLn $ "     " <> Text.unpack hash
-    putStrLn "    terminals:"
-    for_ terminals $ \(NodeHash hash) -> putStrLn $ "     " <> Text.unpack hash
+    for_ nodes $ \nodeHash -> putStrLn $ "    " <> Text.unpack nodeHash
     putStrLn "\x1b[0m"
-
-  links components
 
 fromSQLInt :: Num a => SQLData -> a
 fromSQLInt (SQLInteger n) = fromIntegral n
@@ -549,7 +517,10 @@ timed label action = do
   startTime <- Clock.getCurrentTime
   result <- action
   endTime <- Clock.getCurrentTime
-  putStrLn $ "\n\n" <> label <> " took " <> show (Clock.nominalDiffTimeToSeconds $ Clock.diffUTCTime endTime startTime) <> " seconds\n"
+  putStrLn $ label <> " took " <> show
+    ( Clock.nominalDiffTimeToSeconds
+    $ Clock.diffUTCTime endTime startTime
+    ) <> " seconds"
   pure result
 
 traceValue :: Show a => String -> a -> a

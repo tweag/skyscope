@@ -1,6 +1,6 @@
 div#graph {
     text-align: center;
-    margin-top: 200px;
+    margin-top: 128px;
 }
 
 div#SearchBoxOverlay {
@@ -181,6 +181,11 @@ g.edge text {
     fill: hsl(0, 0%, 25%);
     font-size: 12px;
     user-select: none;
+}
+
+g.edge:hover text {
+    fill: hsl(134.9, 100%, 57.3%)
+    font-weight: bold;
 }
 
 g.edge:hover path {

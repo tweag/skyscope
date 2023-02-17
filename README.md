@@ -21,7 +21,7 @@ cd some-project && bazel build //some:target && skyscope
 
 In the following example Skyscope is used to explore the build graph of Bazel itself:
 
-```
+```bash
 cd ~/git/bazel && bazel build //src:bazel-dev && skyscope
 ```
 
@@ -44,10 +44,12 @@ You can click on these circles to make the hidden nodes visible.
 Visible nodes may be toggled between the _expanded_ and _collapsed_ states by clicking on them.
 When a node has been collapsed, only edges to visible nodes are displayed.
 This is useful for certain "nexus" nodes which have hundreds of edges.
-For example if the BuildConfiguration nodes are all expanded, the resulting graph is 75,000 pixels wide!
+For example, if all BuildConfiguration nodes are expanded the graph rendered is 75,000 pixels wide!
+
+### Path finding
 
 Another useful feature of Skyscope is automatic path finding between disjoint components of the visible graph.
-You can see this in action by searching for the `//src:bazel-dev` TargetCompletion node and making it visible:
+You can see this in action by making the `//src:bazel-dev` TargetCompletion node visible:
 
 ![skyscope-usage-2](https://github.com/tweag/skyscope/blob/e39432dee8619eba2d27568ebd9cb6da68eb8dcd/img/skyscope-usage-2.jpg)
 
@@ -57,11 +59,13 @@ The hidden nodes will be displayed in collapsed mode initially:
 
 ![skyscope-usage-3](https://github.com/tweag/skyscope/blob/e39432dee8619eba2d27568ebd9cb6da68eb8dcd/img/skyscope-usage-3.jpg)
 
+### Hiding nodes
+
 Collapsing nodes can help keep the size of the graph manageable but it will still get out of control from time to time.
-When this happens it is useful to crop the graph to a small selection of nodes:
+When this happens you can crop the graph to a smaller selection of nodes:
 
 ![skyscope-usage-4](https://github.com/tweag/skyscope/blob/e39432dee8619eba2d27568ebd9cb6da68eb8dcd/img/skyscope-usage-4.jpg)
 
 To do this, press and hold the shift key while you make your selection.
 Upon releasing the shift key, the graph will be updated and only the selected nodes will be visible.
-You can also hide individual nodes by ctrl clicking them.
+You can also hide individual nodes by ctrl clicking.

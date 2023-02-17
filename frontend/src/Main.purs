@@ -70,6 +70,7 @@ import Web.Event.EventTarget as EventTarget
 import Web.HTML as HTML
 import Web.HTML.Event.EventTypes as EventTypes
 import Web.HTML.HTMLDocument as HTMLDocument
+import Web.HTML.HTMLElement (HTMLElement)
 import Web.HTML.HTMLElement as HTMLElement
 import Web.HTML.HTMLInputElement as HTMLInputElement
 import Web.HTML.Window as Window
@@ -125,7 +126,7 @@ makeNodeConfiguration = do
       show hash state = Ref.modify_ (Object.insert hash state) nodeStates *> notify (Just hash)
       hide hash = Ref.modify_ (Object.delete hash) nodeStates *> notify Nothing
       visible = Object.keys <$> Ref.read nodeStates
-      json =  Argonaut.fromObject <<< map jsonState <$> Ref.read nodeStates
+      json = Argonaut.fromObject <<< map jsonState <$> Ref.read nodeStates
       jsonState = Argonaut.fromString <<< Show.show
   pure { onChange, get, show, hide, visible, json }
 
@@ -138,8 +139,9 @@ type ClickHandler a = Click -> MouseEvent -> Effect a
 makeTools :: Element -> NodeConfiguration -> Effect (ClickHandler Boolean)
 makeTools graph nodeConfiguration = do
   handlers <- sequence
-    [ makeCrop
+    [ makeOpenAllPaths
     , makeOpenPath
+    , makeCrop
     ]
   pure \element event ->
     let tryTools handlers = case Array.uncons handlers of
@@ -151,11 +153,49 @@ makeTools graph nodeConfiguration = do
      in tryTools handlers
 
   where
+    makeOpenAllPaths :: Effect (ClickHandler Boolean)
+    makeOpenAllPaths = do
+      active <- Ref.new false
+      let openAllPaths = traversePaths openPath
+          updateDOM = traversePaths $ deconstructEdgeElement >=> case _ of
+            Nothing -> error "failed to deconstruct path element"
+            Just (PathElement pathElement) -> do
+              content <- Ref.read active <#> if _
+                then "Open all paths" else "Open path"
+              setTextContent content pathElement.label
+          traversePaths f = pathElements >>= traverse f
+      onKeyDown "Shift" $ Ref.write true active <* updateDOM
+      onKeyUp "Shift" $ Ref.write false active <* updateDOM
+      pure \click event -> Ref.read active >>= not >>>
+        if _ then pure false else case click of
+          PathClick _ -> openAllPaths $> true
+          _ -> pure false
+
+    makeOpenPath :: Effect (ClickHandler Boolean)
+    makeOpenPath = pure \click event -> case click of
+      PathClick edge -> openPath edge $> true
+      _ -> pure false
+
+    openPath :: Element -> Effect Unit
+    openPath edge = Element.id edge <#> split (Pattern "_") >>= case _ of
+      [ origin, destination ] -> runAff do
+          result <- Affjax.post Affjax.ResponseFormat.json "/path"
+            $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray
+            [ Argonaut.fromString origin
+            , Argonaut.fromString destination
+            ]
+          case result of
+            Right response -> case join $ Argonaut.toArray response.body <#> traverse Argonaut.toString of
+              Just path -> liftEffect $ for_ (orderOutsideIn path) $ flip nodeConfiguration.show Collapsed
+              Nothing -> error "unexpected path results json"
+            Left err -> error $ Affjax.printError err
+      _ -> error "malformed edge id"
+
     makeCrop :: Effect (ClickHandler Boolean)
     makeCrop = do
       active <- Ref.new false
       selection <- Ref.new Object.empty
-      let updateDOM = nodes >>= traverse_ \node -> do
+      let updateDOM = nodeElements >>= traverse_ \node -> do
             hash <- Element.id node
             active <- Ref.read active
             selection <- Ref.read selection
@@ -187,33 +227,22 @@ makeTools graph nodeConfiguration = do
             pure true
           _ -> pure false
 
-    makeOpenPath :: Effect (ClickHandler Boolean)
-    makeOpenPath = pure \click event -> case click of
-      PathClick edge -> Element.id edge <#> split (Pattern "_") >>= case _ of
-        [ origin, destination ] -> true <$ runAff do
-            result <- Affjax.post Affjax.ResponseFormat.json "/path"
-              $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray
-              [ Argonaut.fromString origin
-              , Argonaut.fromString destination
-              ]
-            case result of
-              Right response -> case join $ Argonaut.toArray response.body <#> traverse Argonaut.toString of
-                Just path -> liftEffect $ for_ (outsideInOrder path) $ flip nodeConfiguration.show Collapsed
-                Nothing -> error "unexpected path results json"
-              Left err -> error $ Affjax.printError err
-        _ -> error "malformed edge id"
-      _ -> pure false
+    nodeElements :: Effect (Array Element)
+    nodeElements = getElementsByClassName "node" graph
 
-    nodes :: Effect (Array Element)
-    nodes = getElementsByClassName "node" graph
+    edgeElements :: Effect (Array Element)
+    edgeElements = getElementsByClassName "edge" graph
 
-outsideInOrder :: forall a. Array a -> Array a
-outsideInOrder a = if Array.length a `mod` 2 == 0
+    pathElements :: Effect (Array Element)
+    pathElements = getElementsByClassName "Path" graph
+
+orderOutsideIn :: forall a. Array a -> Array a
+orderOutsideIn a = if Array.length a `mod` 2 == 0
   then case Array.unsnoc a of
-    Just { init, last } -> [ last ] <> outsideInOrder init
+    Just { init, last } -> [ last ] <> orderOutsideIn init
     Nothing -> a
   else case Array.uncons a of
-    Just { head, tail } -> [ head ] <> outsideInOrder tail
+    Just { head, tail } -> [ head ] <> orderOutsideIn tail
     Nothing -> a
 
 attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler Boolean -> Effect Unit
@@ -292,9 +321,9 @@ attachGraphRenderer graph nodeConfiguration onClick = do
            attr name elem = MaybeT $ (Number.fromString =<< _) <$> Element.getAttribute name elem
            centerOf :: Element -> MaybeT Effect (Number /\ Number)
            centerOf = deconstructNodeElement >>> liftEffect >=> case _ of
-             Nothing -> MaybeT $ Nothing <$ error "failed to deconstruct node element"
              Just (VisibleNode vn) -> Tuple <$> attr "x" vn.nodeType <*> attr "y" vn.nodeType
              Just (HiddenNode hn) -> Tuple <$> attr "cx" hn.background <*> attr "cy" hn.background
+             Nothing -> error "failed to deconstruct node element"
        hash <- Element.id newNode
        getElementById hash >>= case _ of
          Nothing -> animateFadeIn newNode
@@ -340,6 +369,15 @@ deconstructNodeElement node = do
       pure $ Just $ VisibleNode { nodeType, nodeLabel, background }
     _ /\ _ /\ [ background ] -> pure $ Just $ HiddenNode { background }
     _ -> pure Nothing
+
+data EdgeElement
+  = PathElement { label :: Element }
+
+deconstructEdgeElement :: Element -> Effect (Maybe EdgeElement)
+deconstructEdgeElement edge = getElementsByTagName "text" edge <#> case _ of
+  [ label ] -> Just $ PathElement { label }
+  _ -> Nothing
+
 
 prettyNodeLabel :: NodeHash -> String -> String -> String
 prettyNodeLabel hash nodeType nodeData = case nodeType of
@@ -424,15 +462,15 @@ createSearchBox nodeConfiguration = do
 
   nodeCountMax <- Ref.new 0.0
   nodeCount <- createElement "span" "NodeCount" $ Just searchBar
-  let updateNodeCount :: Number -> Effect Unit
-      updateNodeCount total = setTextContent (fromRight ""
-        (formatNumber "0,0" total) <> " nodes") nodeCount
+  let updateNodeCount :: String -> Number -> Effect Unit
+      updateNodeCount label total = setTextContent (label <> " " <>
+        fromRight "" (formatNumber "0,0" total) <> " nodes") nodeCount
 
   searchResults <- createElement "div" "SearchResults" $ Just searchBox
   let renderResults :: Number -> Object Json -> String -> Effect Unit
       renderResults total nodes pattern = do
         nodeCountMax <- Ref.modify (max total) nodeCountMax
-        updateNodeCount total
+        updateNodeCount "found" total
         removeAllChildren searchResults
         sequence_ $ Object.toArrayWithKey (renderResultRow pattern) nodes
 
@@ -519,7 +557,7 @@ createSearchBox nodeConfiguration = do
   let collapseSearch :: Effect Unit
       collapseSearch = do
         removeAllChildren searchResults
-        updateNodeCount =<< Ref.read nodeCountMax
+        updateNodeCount "" =<< Ref.read nodeCountMax
         Node.setNodeValue "" $ Element.toNode patternInput
         traverse_ (HTMLInputElement.setValue "") (HTMLInputElement.fromElement patternInput)
         traverse_ HTMLElement.blur (HTMLElement.fromElement patternInput)
