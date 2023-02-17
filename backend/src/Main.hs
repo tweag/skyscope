@@ -205,6 +205,7 @@ server db = do
         , "<html>"
         , "  <head>"
         , "    <title>Skyscope</title>"
+        , "    <link rel=\"icon\" href=\"data:image/svg+xml," <> favicon <> "\">"
         , "    <meta charset=\"UTF-8\">"
         , "    <script>"
         ,       Text.decodeUtf8 $ fromMaybe "" $(embedFileIfExists $(do
@@ -374,7 +375,7 @@ renderSvg db nodeStates = do
   nodeMap <- for nodeIdentityMap $ \(NodeHash hash) -> Sqlite.executeSql db
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText hash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
-  links <- findPathLinks db edges $ Map.keysSet nodeStates 
+  links <- findPathLinks db nodeStates edges
 
   let graph = Text.unlines
         [ "digraph {"
@@ -442,9 +443,13 @@ renderSvg db nodeStates = do
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
 
 data Component = Component
-  { initials :: Set NodeHash
-  , terminals :: Set NodeHash
+  { initials :: [NodeHash]
+  , terminals :: [NodeHash]
   } deriving Show
+
+instance Semigroup Component where
+  Component initialsL terminalsL <> Component initialsR terminalsR
+    = Component (nub $ initialsL <> initialsR) (nub $ terminalsL <> terminalsR)
 
 findComponents :: [Edge] -> Set NodeHash -> [Component]
 findComponents edges visibleNodes =
@@ -466,7 +471,9 @@ findComponents edges visibleNodes =
                 <&> (`Set.intersection` visibleNodes)
             let initials = nodes `Set.difference` targets
                 terminals = nodes `Set.difference` sources
-            pure $ Just $ Component initials terminals
+            pure $ Just $ Component
+              (Set.toList initials)
+              (Set.toList terminals)
 
       dfs :: [[NodeHash]] -> State (Set NodeHash) [NodeHash]
       dfs = \case
@@ -486,40 +493,43 @@ findComponents edges visibleNodes =
       $ flip evalState Set.empty
       $ sequenceA $ repeat findComponent
 
+unifyComponents :: Sqlite.Database -> Map NodeHash NodeState -> Component -> Component -> IO (Maybe (Edge, Int))
+unifyComponents db nodeStates lhs rhs = do
+  let pairs = concat
+        [ (,) <$> terminals lhs <*> initials rhs
+        , (,) <$> terminals rhs <*> initials lhs
+        ]
+      find = \case
+        [] -> pure Nothing
+        (origin, destination) : pairs -> do
+          path <- findPath db origin destination
+          if null path then find pairs else pure $
+            let dropCount node = case Map.lookup node nodeStates of
+                  Nothing -> error "invariant violation"
+                  Just Collapsed -> 0
+                  Just Expanded -> 1
+                dropFront = dropCount $ head path
+                dropBack = dropCount $ last path
+                source = head $ drop dropFront path
+                target = head $ drop dropBack $ reverse path
+            in if source == target then Nothing else
+                Just (Edge source target, length path - 2)
+  find pairs
 
-  -- 1. Find connected components.
-  -- 2. Pick two components A and B.
-  -- 3. Check for a path between all initial-terminal pairs.
-  --    a. If a path is found a link edge should be added and the components unified.
-  --       Continue from 2 until only a single component remains.
-  --    b. If no path is found, keep A fixed but try another component as B.
-  --       Eventually, if A has no paths to any of the other components then
-  --       remove it from the set of components under consideration.
-
-{-
-
--  predecessors <- IntMap.fromAscListWith (++)
--    . (map $ \[ SQLInteger t, SQLInteger s ] -> (fromIntegral t, [ fromIntegral s ]))
--    <$> Sqlite.executeSql db [ "SELECT target, source FROM edge ORDER BY target;" ] []
--
--  let incomingEdges :: Int -> Seq (Int, Int)
--      incomingEdges node = Seq.fromList $ map (node, ) $ fromMaybe [] $ IntMap.lookup node predecessors
--
--      step :: Seq (Int, Int) -> State (IntMap Int) (Seq Int)
--      step frontier = case Seq.viewl frontier of
--        (current, next) :< frontier -> do
--          visited <- gets $ isJust . IntMap.lookup next
--          if visited then step frontier else do
--            modify $ IntMap.insert next current
--            step $ frontier >< incomingEdges next
--        EmptyL -> pure Seq.empty
+findPathLinks :: Sqlite.Database -> Map NodeHash NodeState -> [Edge] -> IO [(Edge, Int)]
+findPathLinks db nodeStates edges = nub <$> do
+  let links :: [Component] -> IO [(Edge, Int)]
+      links = \case
+        lhs : rhs : components -> unifyComponents db nodeStates lhs rhs >>= \case
+          Nothing -> (<>)
+            <$> links (lhs : components)
+            <*> links (rhs : components)
+          Just link -> (link :)
+            <$> links (lhs <> rhs : components)
+        _ -> pure []
+      components = findComponents edges $ Map.keysSet nodeStates
 
 
--}
-
-findPathLinks :: Sqlite.Database -> [Edge] -> Set NodeHash -> IO [(Edge, Int)]
-findPathLinks db edges visibleNodes = do
-  let components = findComponents edges visibleNodes
   putStrLn "\x1b[2JfindComponents:\n"
   for_ ([ 0 .. ] `zip` components) $ \(i, Component initials terminals) -> do
     putStrLn $ "  \x1b[1;" <> show (31 + i `mod` 7) <> "mCOMPONENT:"
@@ -529,13 +539,7 @@ findPathLinks db edges visibleNodes = do
     for_ terminals $ \(NodeHash hash) -> putStrLn $ "     " <> Text.unpack hash
     putStrLn "\x1b[0m"
 
-  pure
-    [ (Edge
-        (NodeHash "e2f4994c487d67f3f31ec811178ba4bbc6f2add3cf48a0c2982801f41658bebc")
-        (NodeHash "f307777884f3e174a91e18f9ab3f4bfdd7c74d6cc20619e6ba0545b879a6bd76")
-      , 19
-      )
-    ]
+  links components
 
 fromSQLInt :: Num a => SQLData -> a
 fromSQLInt (SQLInteger n) = fromIntegral n

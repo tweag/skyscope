@@ -147,7 +147,7 @@ g.node.Changed path, g.node.Collapsed.Changed path {
     fill: hsl(49, 100%, 79%);
 }
 
-g.node ellipse.node {
+g.node ellipse {
     fill: hsl(0, 0%, 100%);
     stroke: hsl(0, 0%, 25%);
 }
