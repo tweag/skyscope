@@ -130,6 +130,14 @@ makeNodeConfiguration = do
       jsonState = Argonaut.fromString <<< Show.show
   pure { onChange, get, show, hide, visible, json }
 
+defaultState :: Object NodeState
+defaultState = Object.fromFoldable
+  [ "68ba042abae3b2e637cf502a163ca9d786f617f8199f382e7ac2834aab5a1729" /\ Expanded
+  , "f06f79868fc702f91c95e2d8ff737bd5ffd84226f99c52643a4dfc89cc82794b" /\ Expanded
+  , "7984ff756858d097c09406eaab1b628996425a0e85256c8933aab97f72e7a2c9" /\ Collapsed
+  , "8b33f6a44ff713e4093ad02ef463df4757f034c2e2746e7efc34a7fd0fdb1973" /\ Collapsed
+  ]
+
 data Click
   = NodeClick Element
   | PathClick Element
@@ -157,12 +165,10 @@ makeTools graph nodeConfiguration = do
     makeOpenAllPaths = do
       active <- Ref.new false
       let openAllPaths = traversePaths openPath
-          updateDOM = traversePaths $ deconstructEdgeElement >=> case _ of
-            Nothing -> error "failed to deconstruct path element"
-            Just (PathElement pathElement) -> do
-              content <- Ref.read active <#> if _
-                then "Open all paths" else "Open path"
-              setTextContent content pathElement.label
+          updateDOM = traversePaths \element ->
+            Ref.read active >>= if _
+              then addClass element "Animate"
+              else removeClass element "Animate"
           traversePaths f = pathElements >>= traverse f
       onKeyDown "Shift" $ Ref.write true active <* updateDOM
       onKeyUp "Shift" $ Ref.write false active <* updateDOM
@@ -446,14 +452,14 @@ createSearchBox nodeConfiguration = do
   Element.setAttribute "placeholder" placeholder patternInput
   Element.setAttribute "title" title patternInput
   previousPattern <- Ref.new Nothing
-  findNodes <- makeThrottledAction do
+  filterNodes <- makeThrottledAction do
     pattern <- liftEffect $ map (fromMaybe "")
       $ traverse HTMLInputElement.value
       $ HTMLInputElement.fromElement patternInput
     previous <- liftEffect $ Ref.read previousPattern
     liftEffect $ Ref.write (Just pattern) previousPattern
     if Just pattern == previous then error "pattern unchanged" else do
-      result <- Affjax.post Affjax.ResponseFormat.json "/find"
+      result <- Affjax.post Affjax.ResponseFormat.json "/filter"
         $ Just $ Affjax.RequestBody.json $ Argonaut.fromString
         $ "%" <> pattern <> "%"
       case result of
@@ -533,7 +539,7 @@ createSearchBox nodeConfiguration = do
                       in setTextContent (ellipsis <> String.drop startIndex content) span
 
   let updateSearch :: Aff Unit
-      updateSearch = findNodes >>= \(resultsJson /\ pattern) ->
+      updateSearch = filterNodes >>= \(resultsJson /\ pattern) ->
         let results = do
               array <- Argonaut.toArray resultsJson
               total <- Argonaut.toNumber =<< array !! 0

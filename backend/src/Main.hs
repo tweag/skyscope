@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
@@ -17,11 +18,12 @@ import Control.Category ((>>>))
 import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
 import Control.Concurrent.STM (atomically, retry)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVar, readTVarIO, stateTVar, writeTVar)
-import Control.Monad (join, guard)
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad (guard, join)
+import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
 import Control.Monad.State (State, evalState)
+import Control.Monad.Trans.Reader (ReaderT(..))
 import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Json
@@ -29,13 +31,12 @@ import qualified Data.Attoparsec.Combinator as Parser
 import Data.Attoparsec.Text (Parser)
 import qualified Data.Attoparsec.Text as Parser
 import Data.Bifunctor (bimap, first)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.FileEmbed (embedFile, embedFileIfExists)
 import Data.Foldable (for_)
-import Data.Functor ((<&>))
+import Data.Functor (($>), (<&>))
 import Data.Int (Int64)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
@@ -200,6 +201,12 @@ graphParser = do
 
 server :: Sqlite.Database -> IO ()
 server db = do
+  memo <- Memo
+    <$> newTVarIO Map.empty -- memoStats
+    <*> newTVarIO Map.empty -- findPathMemo
+    <*> newTVarIO Map.empty -- filterNodesMemo
+    <*> newTVarIO Map.empty -- unifyComponentsMemo
+  let withMemo action = liftIO $ runReaderT action memo
   putStrLn $ "\nOpen this link in your browser: 🔭 \x1b[1;36mhttp://localhost:28581/\x1b[0m\n"
   Web.scotty 28581 $ do
     Web.get "/" $ do
@@ -225,28 +232,28 @@ server db = do
         , "  <body></body>"
         , "</html>"
         ]
-    Web.post "/find" $ Json.eitherDecode <$> Web.body >>= \case
-      Right pattern -> Web.json =<< liftIO (findNodes db 100 pattern)
+    Web.post "/filter" $ Json.eitherDecode <$> Web.body >>= \case
+      Right pattern -> Web.json =<< withMemo (filterNodes db 100 pattern)
       Left err -> badRequest err
     Web.post "/path" $ Json.eitherDecode <$> Web.body >>= \case
-      Right (origin, destination) -> Web.json =<< liftIO (findPath db origin destination)
+      Right (origin, destination) -> Web.json =<< withMemo (findPath db origin destination)
       Left err -> badRequest err
     Web.post "/render" $ Json.eitherDecode <$> Web.body >>= \case
       Right visibleNodes -> do
         Web.setHeader "Content-Type" "image/svg+xml"
-        Web.text =<< liftIO (renderSvg db visibleNodes)
+        Web.text =<< withMemo (renderSvg db visibleNodes)
       Left err -> badRequest err
   where
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
     favicon = "<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 "
       <> "100 100%22><text y=%22.9em%22 font-size=%2290%22>🔭</text></svg>"
 
-findNodes :: Sqlite.Database -> Int64 -> Text -> IO (Int64, Map NodeHash Node)
-findNodes db limit pattern = do
-  SQLInteger total <- Sqlite.executeSqlScalar db
+filterNodes :: Sqlite.Database -> Int64 -> Text -> Memoize (Int64, Map NodeHash Node)
+filterNodes db limit = memoize "filterNodes" filterNodesMemo $ \pattern -> do
+  SQLInteger total <- liftIO $ Sqlite.executeSqlScalar db
     [ "SELECT COUNT(hash) FROM node"
     , "WHERE data LIKE ?" ] [ SQLText pattern ]
-  records <- Sqlite.executeSql db
+  records <- liftIO $ Sqlite.executeSql db
     [ "SELECT hash, type, data FROM node"
     , "WHERE data LIKE ? LIMIT ?;" ]
     [ SQLText pattern, SQLInteger limit ]
@@ -254,41 +261,38 @@ findNodes db limit pattern = do
     [ SQLText hash, SQLText nodeType, SQLText nodeData ] ->
       (hash, Node nodeType nodeData)
 
-findPath :: Sqlite.Database -> NodeHash -> NodeHash -> IO [NodeHash]
-findPath db origin destination = selecting $ \origin destination steps -> do
-  let stepMapBytes = BS.unpack steps
-      stepMapSizeBytes = length stepMapBytes
-      stepMapSize = stepMapSizeBytes `div` sizeOf (0 :: CLong)
-  if stepMapSize * sizeOf (0 :: CLong) /= stepMapSizeBytes
-      then error $ "misaligned path data for " <> show destination
-      else Marshal.allocaArray stepMapSize $ \stepMapPtr -> do
-        Marshal.pokeArray (castPtr stepMapPtr) stepMapBytes
-        let maxLength = 1048576 -- 4MiB of int32_t
-        Marshal.allocaArray maxLength $ \pathPtr -> do
-          actualLength <- fromIntegral <$> Main.c_findPath
-            (fromIntegral origin) (fromIntegral destination)
-            stepMapPtr (fromIntegral stepMapSize)
-            pathPtr (fromIntegral maxLength)
-          if actualLength == -1 then error "exceeded max path length" else do
-            path <- Marshal.peekArray actualLength pathPtr
-            for (fromIntegral <$> path) $ \nodeIdx -> Sqlite.executeSql db
-              [ "SELECT hash FROM node WHERE idx = ?;" ] [ SQLInteger nodeIdx ] <&> \case
-                [] -> error $ "failed to find hash for path node " <> show nodeIdx
-                [ [ SQLText nodeHash ] ] -> nodeHash
+findPath :: Sqlite.Database -> NodeHash -> NodeHash -> Memoize [NodeHash]
+findPath db = curry $ memoize "findPath" findPathMemo $ \(origin, destination) -> liftIO $ do
+  destination <- getNodeIdx destination
+  origin <- getNodeIdx origin
+  steps <- Sqlite.executeSql db
+    [ "SELECT steps FROM path"
+    , "WHERE destination = ?;" ]
+    [ SQLInteger destination ]
+  case steps of
+    [] -> error $ "no path data for " <> show destination
+    [ [ SQLBlob steps ] ] -> do
+        let stepMapBytes = BS.unpack steps
+            stepMapSizeBytes = length stepMapBytes
+            stepMapSize = stepMapSizeBytes `div` sizeOf (0 :: CLong)
+        if stepMapSize * sizeOf (0 :: CLong) /= stepMapSizeBytes
+            then error $ "misaligned path data for " <> show destination
+            else Marshal.allocaArray stepMapSize $ \stepMapPtr -> do
+              Marshal.pokeArray (castPtr stepMapPtr) stepMapBytes
+              let maxLength = 1048576 -- 4MiB of int32_t
+              Marshal.allocaArray maxLength $ \pathPtr -> do
+                actualLength <- fromIntegral <$> Main.c_findPath
+                  (fromIntegral origin) (fromIntegral destination)
+                  stepMapPtr (fromIntegral stepMapSize)
+                  pathPtr (fromIntegral maxLength)
+                if actualLength == -1 then error "exceeded max path length" else do
+                  path <- Marshal.peekArray actualLength pathPtr
+                  for (fromIntegral <$> path) $ \nodeIdx -> Sqlite.executeSql db
+                    [ "SELECT hash FROM node WHERE idx = ?;" ] [ SQLInteger nodeIdx ] <&> \case
+                      [] -> error $ "failed to find hash for path node " <> show nodeIdx
+                      [ [ SQLText nodeHash ] ] -> nodeHash
 
   where
-    selecting :: (Int64 -> Int64 -> ByteString -> IO a) -> IO a
-    selecting action = do
-      origin <- getNodeIdx origin
-      destination <- getNodeIdx destination
-      steps <- Sqlite.executeSql db
-        [ "SELECT steps FROM path"
-        , "WHERE destination = ?;" ]
-        [ SQLInteger destination ]
-      case steps of
-        [] -> error $ "no path data for " <> show destination
-        [ [ SQLBlob steps ] ] -> action origin destination steps
-
     getNodeIdx :: Text -> IO Int64
     getNodeIdx hash = Sqlite.executeSqlScalar db
       [ "SELECT idx FROM node WHERE hash = ?;" ]
@@ -349,6 +353,9 @@ indexPaths db progress = do
         offset <- get <* modify (+ (1 + n))
         pure $ negate offset
 
+    fromSQLInt :: Num a => SQLData -> a
+    fromSQLInt (SQLInteger n) = fromIntegral n
+
 foreign import ccall safe "path.cpp" c_indexPaths
   :: Ptr CInt -- predMap
   -> CInt -- destination
@@ -356,10 +363,10 @@ foreign import ccall safe "path.cpp" c_indexPaths
   -> Ptr CLong -- stepMap
   -> IO CInt
 
-renderSvg :: Sqlite.Database -> Map NodeHash NodeState -> IO LazyText.Text
+renderSvg :: Sqlite.Database -> Map NodeHash NodeState -> Memoize LazyText.Text
 renderSvg db nodeStates = do
   edges <- fmap (nub . concat) $ flip Map.traverseWithKey nodeStates $
-    \nodeHash state -> Sqlite.executeSql db
+    \nodeHash state -> liftIO $ Sqlite.executeSql db
       [ "SELECT s.hash, t.hash FROM edge"
       , "INNER JOIN node AS s ON s.idx = edge.source"
       , "INNER JOIN node AS t ON t.idx = edge.target"
@@ -373,7 +380,7 @@ renderSvg db nodeStates = do
   let nodeIdentityMap :: Map NodeHash NodeHash
       nodeIdentityMap = Map.fromList $ map (join (,)) $ Map.keys nodeStates <>
         (edges >>= \(Edge source target) -> [ source, target ])
-  nodeMap <- for nodeIdentityMap $ \nodeHash -> Sqlite.executeSql db
+  nodeMap <- for nodeIdentityMap $ \nodeHash -> liftIO $ Sqlite.executeSql db
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText nodeHash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
   links <- findPathLinks db nodeStates edges
@@ -395,21 +402,22 @@ renderSvg db nodeStates = do
         , Text.unlines $ graphvizEdge [] <$> edges
         , Text.unlines $
             let tooltip hiddenCount = "Click here to show " <> Text.pack (show hiddenCount) <> " hidden nodes."
-            in links <&> \(hiddenCount, edge) -> graphvizEdge
+            in links <&> \PathLink{..} -> graphvizEdge
                 [ ("arrowhead", "none")
                 , ("class", "Path")
-                , ("label", "Open path")
-                , ("labeltooltip", tooltip hiddenCount)
+                , ("label", "Open")
+                , ("labeltooltip", tooltip linkHidden)
                 , ("penwidth", "1.0")
                 , ("style", "dotted")
-                , ("tooltip", tooltip hiddenCount)
-                ] edge
+                , ("tooltip", tooltip linkHidden)
+                ] linkEdge
         , "}"
         ]
-  Text.writeFile "/tmp/skyscope.dot" graph  -- For debugging
-  readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
-    (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
-    (ExitSuccess, svg, _) -> LazyText.fromStrict svg
+  liftIO $ do
+    Text.writeFile "/tmp/skyscope.dot" graph  -- For debugging
+    readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
+      (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
+      (ExitSuccess, svg, _) -> LazyText.fromStrict svg
 
   where
     graphvizNode :: NodeHash -> Node -> Text
@@ -443,81 +451,119 @@ renderSvg db nodeStates = do
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
 
-type Component = Set NodeHash
+type Component = Map NodeHash NodeState
 
-findPathLinks :: Sqlite.Database -> Map NodeHash NodeState -> [Edge] -> IO [(Int, Edge)]
+data PathLink = PathLink
+  { linkHidden :: Int
+  , linkLength :: Int
+  , linkEdge :: Edge
+  } deriving (Eq, Ord, Show)
+
+findPathLinks :: Sqlite.Database -> Map NodeHash NodeState -> [Edge] -> Memoize [PathLink]
 findPathLinks db nodeStates edges = timed "findPathLinks" $ nub <$> do
-  let components = findComponents edges $ Map.keysSet nodeStates
-      pairs = concat [ [ (c1, c2), (c2, c1) ] | c1 : cs <- tails components, c2 <- cs ] -- m² pairs
+  let components = findComponents edges nodeStates
+      pairs = concat [ [ (c1, c2), (c2, c1) ] | c1 : cs <- tails components, c2 <- cs ]
+  liftIO $ printComponents components
   fmap catMaybes $ for pairs $ uncurry $ unifyComponents db nodeStates
 
-findComponents :: [Edge] -> Set NodeHash -> [Component]
-findComponents edges visibleNodes =
-  let neighbourMap = flip Map.union (Map.fromSet (const []) visibleNodes) $ flip Map.restrictKeys visibleNodes
-        $ Map.fromAscListWith (++) $ sortOn fst $ edges >>= \(Edge s t) -> [ (s, [ t ]), (t, [ s ]) ]
-
-      findComponent :: State (Set NodeHash) (Maybe Component)
+findComponents :: [Edge] -> Map NodeHash NodeState -> [Component]
+findComponents edges nodeStates =
+  let discreteMap = nodeStates $> []
+      neighbourMap = flip Map.union discreteMap $
+        Map.fromAscListWith (++) $ sortOn fst $ edges >>= \(Edge s t) ->
+            case (,) <$> Map.lookup s nodeStates <*> Map.lookup t nodeStates of
+              Just (source, target) ->
+                [ (s, [ (t, target) ])
+                , (t, [ (s, source) ])
+                ]
+              Nothing -> []
+          
+      findComponent :: State (Map NodeHash NodeState) (Maybe Component)
       findComponent = do
-        unvisitedNodes <- gets $ Set.difference visibleNodes
-        case Set.lookupMin unvisitedNodes of
+        unvisitedNodes <- gets $ Map.difference nodeStates
+        case Map.lookupMin unvisitedNodes of
           Nothing -> pure Nothing
           Just node -> do
-            nodes <- Set.fromList <$> dfs [ [ node ] ]
-                <&> (`Set.intersection` visibleNodes)
+            nodes <- Map.fromList <$> dfs [ [ node ] ]
+                <&> (`Map.intersection` nodeStates)
             pure $ Just nodes
 
-      dfs :: [[NodeHash]] -> State (Set NodeHash) [NodeHash]
       dfs = \case
         [] -> pure []
         [] : stack -> dfs stack
-        (next : siblings) : stack -> do
+        (next@(node, state) : siblings) : stack -> do
           let stack' = siblings : stack
-          visited <- gets $ Set.member next
+          visited <- gets $ Map.member node
           if visited then dfs stack' else do
-            modify $ Set.insert next
-            case Map.lookup next neighbourMap of
+            modify $ Map.insert node state
+            case Map.lookup node neighbourMap of
               Just neighbours -> (next :) <$> dfs (neighbours : stack')
               Nothing -> dfs stack'
 
   in catMaybes
       $ takeWhile isJust
-      $ flip evalState Set.empty
+      $ flip evalState Map.empty
       $ sequenceA $ repeat findComponent
 
-unifyComponents :: Sqlite.Database -> Map NodeHash NodeState -> Component -> Component -> IO (Maybe (Int, Edge))
-unifyComponents db nodeStates c1 c2 = timed "unifyComponents" $ do
-  let unify (origin, destination) =
-        findPath db origin destination <&> \path ->
-          let pathState = (id &&& flip Map.lookup nodeStates) <$> path
-              hiddenCount = length $ filter (isNothing . snd) pathState
-              shortenPath path = nonEmpty =<< dropExpanded <$> nonEmpty path
-              dropExpanded = NE.filter $ snd >>> (/= Just Expanded)
-              edge = shortenPath pathState >>= \p -> do
-                let source = fst $ NE.head p
-                    target = fst $ NE.last p
-                guard $ source /= target
-                pure $ Edge source target
-          in sequenceA (hiddenCount, edge)
-      shortest = listToMaybe . sortOn snd . catMaybes
-  fmap shortest $ sequenceA $ fmap unify $ (,) <$> Set.toList c1 <*> Set.toList c2
+unifyComponents :: Sqlite.Database -> Map NodeHash NodeState -> Component -> Component -> Memoize (Maybe PathLink)
+unifyComponents db nodeStates = curry $ memoize "unifyComponents" unifyComponentsMemo $ \(c1, c2) -> do
+  let unify (origin, destination) = findPath db origin destination <&> \path ->
+        let pathState = (id &&& flip Map.lookup nodeStates) <$> path
+            hiddenCount = length $ filter (isNothing . snd) (traceValue "\x1b[34mpathState" pathState)
+            shortenPath path = nonEmpty =<< dropExpanded <$> nonEmpty path
+            dropExpanded = NE.filter $ snd >>> (/= Just Expanded)
+        in shortenPath pathState >>= \p -> do
+              let source = fst $ NE.head p
+                  target = fst $ NE.last p
+              guard $ source /= target
+              pure $ PathLink
+                { linkHidden = hiddenCount
+                , linkLength = NE.length p
+                , linkEdge =  Edge source target
+                }
+      shortest = listToMaybe . traceValue "\x1b[33mordered" . sortOn linkLength . catMaybes
+  fmap shortest $ sequenceA $ fmap unify $ (,) <$> Map.keys c1 <*> Map.keys c2
 
 printComponents :: [Component] -> IO ()
 printComponents components = do
-  putStrLn "\x1b[1;1H\x1b[2JfindComponents:\n"
+  putStrLn {-"\x1b[1;1H\x1b[2J-} "findComponents:\n"
   for_ ([ 0 .. ] `zip` components) $ \(i, nodes) -> do
     putStrLn $ "  \x1b[1;" <> show (31 + i `mod` 7) <> "mCOMPONENT:"
-    for_ nodes $ \nodeHash -> putStrLn $ "    " <> Text.unpack nodeHash
+    for_ (Map.assocs nodes) $ \(nodeHash, nodeState) ->
+      putStrLn $ "    " <> Text.unpack nodeHash <> " " <> show nodeState
     putStrLn "\x1b[0m"
 
-fromSQLInt :: Num a => SQLData -> a
-fromSQLInt (SQLInteger n) = fromIntegral n
+type Memoize a = ReaderT Memo IO a
 
-timed :: String -> IO a -> IO a
+data Memo = Memo
+  { memoStats :: TVar (Map String (Int, Int))
+  , findPathMemo :: TVar (Map (NodeHash, NodeHash) [NodeHash])
+  , filterNodesMemo :: TVar (Map Text (Int64, Map NodeHash Node))
+  , unifyComponentsMemo :: TVar (Map (Component, Component) (Maybe PathLink))
+  }
+
+memoize
+  :: (Ord k, Show k, Show a)
+  => String -> (Memo -> TVar (Map k a))
+  -> (k -> Memoize a) -> k -> Memoize a
+memoize label memo action key = do
+  memo <- asks memo
+  liftIO (Map.lookup key <$> readTVarIO memo) >>= \case
+    Just value -> liftIO $ value <$ log 30 "hit" ""
+    Nothing -> action key >>= \value -> liftIO $ do
+      atomically $ modifyTVar memo $ Map.insert key value
+      value <$ log 31 "miss\x1b[0m" (ansi 37 "  →   " <> show value)
+  where
+    ansi n s = "\x1b[" <> show n <> "m" <> s <> "\x1b[0m"
+    log n outcome value = putStrLn $ ansi n $ "memo cache "
+      <> outcome <> " for " <> label <> ": " <> show key <> value
+
+timed :: MonadIO m => String -> m a -> m a
 timed label action = do
-  startTime <- Clock.getCurrentTime
+  startTime <- liftIO $ Clock.getCurrentTime
   result <- action
-  endTime <- Clock.getCurrentTime
-  putStrLn $ label <> " took " <> show
+  endTime <- liftIO $ Clock.getCurrentTime
+  liftIO $ putStrLn $ "\n" <> label <> " took " <> show
     ( Clock.nominalDiffTimeToSeconds
     $ Clock.diffUTCTime endTime startTime
     ) <> " seconds"
