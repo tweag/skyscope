@@ -123,7 +123,8 @@ data NodeState
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
 data Edge = Edge
-  { edgeSource :: NodeHash
+  { edgeGroup :: Int64
+  , edgeSource :: NodeHash
   , edgeTarget :: NodeHash
   } deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
@@ -138,15 +139,15 @@ importGraph db = timed "importGraph" $ do
   let assignIndex node = gets (, node) <* modify (+ 1)
       indexedNodes = evalState (for nodes assignIndex) 1
       coerceMaybe = fromMaybe $ error "parser produced an edge with an unknown node"
-      indexedEdges = coerceMaybe $ for (Set.toList edges) $ \(Edge source target) -> do
+      indexedEdges = coerceMaybe $ for (Set.toList edges) $ \(Edge group source target) -> do
         (sourceIndex, _) <- Map.lookup source indexedNodes
         (targetIndex, _) <- Map.lookup target indexedNodes
-        pure (sourceIndex, targetIndex)
+        pure (group, sourceIndex, targetIndex)
   Sqlite.batchInsert db "node" [ "idx", "hash", "type", "data" ] $
     Map.assocs indexedNodes <&> \(nodeHash, (nodeIdx, Node nodeType nodeData)) ->
       SQLInteger nodeIdx : (SQLText <$> [nodeHash, nodeType, nodeType <> ":" <> nodeData ])
-  Sqlite.batchInsert db "edge" [ "source", "target" ] $
-    indexedEdges <&> \(s, t) -> SQLInteger <$> [ s, t ]
+  Sqlite.batchInsert db "edge" [ "group_num", "source", "target" ] $
+    indexedEdges <&> \(g, s, t) -> SQLInteger <$> [ g, s, t ]
 
   where
     createSchema db = Sqlite.executeStatements db
@@ -162,6 +163,7 @@ importGraph db = timed "importGraph" $ do
       , [ "CREATE TABLE edge ("
         , "  source INTEGER,"
         , "  target INTEGER,"
+        , "  group_num INTEGER,"
         , "  PRIMARY KEY (source, target),"
         , "  FOREIGN KEY (source) REFERENCES node(idx),"
         , "  FOREIGN KEY (target) REFERENCES node(idx)"
@@ -192,7 +194,7 @@ graphParserBazel5 = do
     lineParser :: Parser Graph
     lineParser = do
       nodes@((sourceHash, _) : targets) <- Parser.many1 nodeParser
-      pure (Map.fromList nodes, Set.fromList $ Edge sourceHash . fst <$> targets)
+      pure (Map.fromList nodes, Set.fromList $ Edge 0 sourceHash . fst <$> targets)
     nodeParser :: Parser (NodeHash, Node)
     nodeParser = do
       nodeType <- Parser.takeWhile1 $ \c -> c /= ':' && c /= '\n'
@@ -374,19 +376,19 @@ renderSvg :: Sqlite.Database -> Map NodeHash NodeState -> Memoize LazyText.Text
 renderSvg db nodeStates = do
   edges <- fmap (nub . concat) $ flip Map.traverseWithKey nodeStates $
     \nodeHash state -> liftIO $ Sqlite.executeSql db
-      [ "SELECT s.hash, t.hash FROM edge"
+      [ "SELECT group_num, s.hash, t.hash FROM edge"
       , "INNER JOIN node AS s ON s.idx = edge.source"
       , "INNER JOIN node AS t ON t.idx = edge.target"
       , "WHERE s.hash = ?1 OR t.hash = ?1;" ] [ SQLText nodeHash ]
-      <&> (>>= \[ SQLText source, SQLText target ] ->
+      <&> (>>= \[ SQLInteger group, SQLText source, SQLText target ] ->
                     let collapsed = state == Collapsed
                         hidden  = (`Map.notMember` nodeStates)
                     in if collapsed && (hidden source || hidden target)
-                        then [] else [ Edge source target ]
+                        then [] else [ Edge group source target ]
           )
   let nodeIdentityMap :: Map NodeHash NodeHash
       nodeIdentityMap = Map.fromList $ map (join (,)) $ Map.keys nodeStates <>
-        (edges >>= \(Edge source target) -> [ source, target ])
+        (edges >>= \(Edge _ source target) -> [ source, target ])
   nodeMap <- for nodeIdentityMap $ \nodeHash -> liftIO $ Sqlite.executeSql db
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText nodeHash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
@@ -449,7 +451,7 @@ renderSvg db nodeStates = do
               ]
 
     graphvizEdge :: [(Text, Text)] -> Edge -> Text
-    graphvizEdge attrs (Edge source target) =
+    graphvizEdge attrs (Edge _ source target) =
       "    node_" <> source <> " -> node_" <> target <>
       graphvizAttributes (attrs ++ [ ("id", source <> "_" <> target) ])
 
@@ -477,7 +479,7 @@ findComponents :: [Edge] -> Map NodeHash NodeState -> [Component]
 findComponents edges nodeStates =
   let discreteMap = nodeStates $> []
       neighbourMap = flip Map.union discreteMap $
-        Map.fromAscListWith (++) $ sortOn fst $ edges >>= \(Edge s t) ->
+        Map.fromAscListWith (++) $ sortOn fst $ edges >>= \(Edge _ s t) ->
             case (,) <$> Map.lookup s nodeStates <*> Map.lookup t nodeStates of
               Just (source, target) ->
                 [ (s, [ (t, target) ])
@@ -526,7 +528,7 @@ unifyComponents db nodeStates = curry $ memoize "unifyComponents" unifyComponent
               pure $ PathLink
                 { linkHidden = hiddenCount
                 , linkLength = NE.length p
-                , linkEdge =  Edge source target
+                , linkEdge =  Edge 0 source target
                 }
       shortest = listToMaybe . traceValue "\x1b[33mordered" . sortOn linkLength . catMaybes
   fmap shortest $ sequenceA $ fmap unify $ (,) <$> Map.keys c1 <*> Map.keys c2
