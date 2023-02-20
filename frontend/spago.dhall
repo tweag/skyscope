@@ -3,6 +3,7 @@
   [ "aff"
   , "affjax"
   , "affjax-web"
+  , "argonaut-codecs"
   , "argonaut-core"
   , "arrays"
   , "avar"

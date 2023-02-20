@@ -13,13 +13,12 @@
 
 module Main where
 
-import Control.Applicative ((<|>))
 import Control.Arrow ((&&&))
 import Control.Category ((>>>))
 import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
 import Control.Concurrent.STM (atomically, retry)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVar, readTVarIO, stateTVar, writeTVar)
-import Control.Monad (guard, join)
+import Control.Monad (guard)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
@@ -31,13 +30,13 @@ import qualified Data.Aeson as Json
 import qualified Data.Attoparsec.Combinator as Parser
 import Data.Attoparsec.Text (Parser)
 import qualified Data.Attoparsec.Text as Parser
-import Data.Bifunctor (bimap, first)
+import Data.Bifunctor (first, second)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.FileEmbed (embedFile, embedFileIfExists)
 import Data.Foldable (for_)
-import Data.Functor (($>), (<&>))
+import Data.Functor (($>), (<&>), void)
 import Data.Int (Int64)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
@@ -68,52 +67,69 @@ import Network.HTTP.Types.Status (badRequest400)
 import Prelude
 import qualified Sqlite
 import System.Directory (getCurrentDirectory)
+import System.Environment (getArgs)
 import System.Exit (ExitCode(..))
 import System.FilePath.Find ((~~?), filePath, find)
 import System.IO (hSetEncoding, stdout, utf8)
 import System.Posix.Temp (mkdtemp)
 import System.Process (readProcess)
 import System.Process.Text (readProcessWithExitCode)
+import Web.Scotty (ActionM)
 import qualified Web.Scotty as Web
 
 main :: IO ()
 main = do
-  hSetEncoding stdout utf8
-  dir <- mkdtemp "skyscope"
-  let dbPath = dir <> "/skyscope.sqlite"
-  absolutePath <- getCurrentDirectory <&> (<> ("/" <> dbPath))
-  putStrLn $ "\x1b[1mimporting graph:\x1b[0;30m " <> absolutePath <> "\x1b[0m"
-  Sqlite.withDatabase dbPath $ \db -> do
-    Sqlite.executeStatements db
-      [ [ "pragma journal_mode = WAL;" ]
-      , [ "pragma mmap_size = 1073741824;" ]
-      , [ "pragma synchronous = off;" ]
-      ]
-    importGraph db
-    progress <- newTVarIO (0, 1)
-    indexStartTime <- Clock.getCurrentTime
-    forkIO $ indexPaths db progress
-    let showProgress = do
-          threadDelay 100_000
-          (done, total) <- readTVarIO progress
-          timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
-          let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
-              expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime
-              ansi = if done < total then "37" else "32"
-          putStrLn $ "\x1b[1F\x1b[2K\x1b[" <> ansi <> "mindexed paths to "
-              <> show done <> " nodes (" <> show total <> " total, "
-              <> show expectedTime <> " seconds remaining)\x1b[0m"
-          if done < total then showProgress else do
-              dbSize <- readProcess "bash" [ "-c", "sync; ls -sh " <> dbPath <> " | grep -Po '^\\w+'" ] ""
-              putStrLn $ "  time taken = " <> show timeTaken <> " seconds"
-              putStrLn $ "  database size = " <> dbSize
-    forkIO showProgress
+  path <- initialiseDatabase
+  Sqlite.withDatabase path $ \db -> do
+    optimiseDatabaseAccess db
+    indexPathsAsync db path
     server db
 
+initialiseDatabase :: IO FilePath
+initialiseDatabase = do
+  dir <- mkdtemp "skyscope"
+  let path = dir <> "/skyscope.sqlite"
+  absolutePath <- getCurrentDirectory <&> (<> ("/" <> path))
+  putStrLn $ "\x1b[1mimporting graph:\x1b[0;30m " <> absolutePath <> "\x1b[0m"
+  Sqlite.withDatabase path $ \db -> do
+    optimiseDatabaseAccess db
+    importGraph db
+  pure path
+
+optimiseDatabaseAccess :: Sqlite.Database -> IO ()
+optimiseDatabaseAccess db = Sqlite.executeStatements db
+  [ [ "pragma mmap_size = 1073741824;" ]
+  , [ "pragma journal_mode = WAL;" ]
+  , [ "pragma synchronous = off;" ]
+  ]
+
+indexPathsAsync :: Sqlite.Database -> FilePath -> IO ()
+indexPathsAsync db path = do
+  progress <- newTVarIO (0, 1)
+  indexStartTime <- Clock.getCurrentTime
+  forkIO $ indexPaths db progress
+  let showProgress = do
+        threadDelay 100_000
+        (done, total) <- readTVarIO progress
+        timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
+        let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
+            expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime
+            ansi = if done < total then "37" else "32"
+        putStrLn $ "\x1b[1F\x1b[2K\x1b[" <> ansi <> "mindexed paths to "
+            <> show done <> " nodes (" <> show total <> " total, "
+            <> show expectedTime <> " seconds remaining)\x1b[0m"
+        if done < total then showProgress else do
+            dbSize <- readProcess "bash" [ "-c", "sync; sleep 1; ls -sh " <> path <> " | grep -Po '^\\w+'" ] ""
+            putStrLn $ "  time taken = " <> show timeTaken <> " seconds"
+            putStrLn $ "  database size = " <> dbSize
+  void $ forkIO showProgress
+
 data Node = Node
-  { nodeType :: Text
-  , nodeData :: Text
+  { nodeData :: Text
+  , nodeType :: NodeType
   } deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
+
+type NodeType = Text
 
 type NodeHash = Text
 
@@ -122,18 +138,25 @@ data NodeState
   | Expanded
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
+type NodeMap a = Map NodeHash a
+
 data Edge = Edge
-  { edgeGroup :: Int64
+  { edgeGroup :: Int
   , edgeSource :: NodeHash
   , edgeTarget :: NodeHash
   } deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-type Graph = (Map NodeHash Node, Set Edge)
+type Graph = (NodeMap Node, Set Edge)
 
 importGraph :: Sqlite.Database -> IO ()
 importGraph db = timed "importGraph" $ do
   createSchema db
-  (nodes, edges) <- Text.getContents <&> Parser.parseOnly graphParser >>= \case
+  bazel5Flag <- ("--bazel5" `elem`) <$> getArgs
+  let (parser, version) = if bazel5Flag
+        then (graphParserBazel5, 5)
+        else (graphParserBazel6, 6)
+  putStrLn $ "Using Bazel " <> show version <> " Skyframe parser"
+  (nodes, edges) <- Text.getContents <&> Parser.parseOnly parser >>= \case
     Left err -> error $ "failed to parse skyframe graph: " <> err
     Right graph -> pure graph
   let assignIndex node = gets (, node) <* modify (+ 1)
@@ -143,23 +166,24 @@ importGraph db = timed "importGraph" $ do
         (sourceIndex, _) <- Map.lookup source indexedNodes
         (targetIndex, _) <- Map.lookup target indexedNodes
         pure (group, sourceIndex, targetIndex)
-  Sqlite.batchInsert db "node" [ "idx", "hash", "type", "data" ] $
-    Map.assocs indexedNodes <&> \(nodeHash, (nodeIdx, Node nodeType nodeData)) ->
-      SQLInteger nodeIdx : (SQLText <$> [nodeHash, nodeType, nodeType <> ":" <> nodeData ])
+  Sqlite.batchInsert db "node" [ "idx", "hash", "data", "type" ] $
+    Map.assocs indexedNodes <&> \(nodeHash, (nodeIdx, Node nodeData nodeType)) ->
+      SQLInteger nodeIdx : (SQLText <$> [nodeHash, nodeType <> ":" <> nodeData, nodeType ])
   Sqlite.batchInsert db "edge" [ "group_num", "source", "target" ] $
-    indexedEdges <&> \(g, s, t) -> SQLInteger <$> [ g, s, t ]
+    indexedEdges <&> \(g, s, t) -> SQLInteger <$> [ fromIntegral g, s, t ]
 
   where
     createSchema db = Sqlite.executeStatements db
       [ [ "CREATE TABLE node ("
         , "  idx INTEGER,"
         , "  hash TEXT,"
-        , "  type TEXT,"
         , "  data TEXT,"
+        , "  type TEXT,"
         , "  PRIMARY KEY (idx),"
         , "  UNIQUE (hash)"
         , ");"
         ]
+
       , [ "CREATE TABLE edge ("
         , "  source INTEGER,"
         , "  target INTEGER,"
@@ -169,6 +193,7 @@ importGraph db = timed "importGraph" $ do
         , "  FOREIGN KEY (target) REFERENCES node(idx)"
         , ");"
         ]
+
       , [ "CREATE TABLE path ("
         , "  destination INTEGER,"
         , "  steps BLOB,"
@@ -178,97 +203,178 @@ importGraph db = timed "importGraph" $ do
         ]
       ]
 
-graphParser :: Parser Graph
-graphParser = graphParserBazel5 <|> graphParserBazel6
+-- $> checkParserEquivalence
+
+checkParserEquivalence :: IO ()
+checkParserEquivalence = do
+  let zeroEdges = second $ Set.map $ \(Edge _ s t) -> Edge 0 s t
+      resultBazel5 = Parser.parseOnly graphParserBazel5 exampleBazel5
+      resultBazel6 = Parser.parseOnly graphParserBazel6 exampleBazel6
+  if resultBazel5 == (zeroEdges <$> resultBazel6) then pure () else
+      error $ "parsers not equivalent"
+
+keyParser :: Parser (NodeHash, Node)
+keyParser = do
+  nodeType <- Parser.takeWhile1 $ \c -> c /= ':' && c /= '\n'
+  Parser.char ':'
+  nodeData <- Parser.takeTill $ \c -> c == '|' || c == '\n'
+  let nodeHash = Text.decodeUtf8 $ LBSC.toStrict $ toLazyByteString $
+        byteStringHex $ SHA256.hash $ Text.encodeUtf8 $ nodeType <> ":" <> nodeData
+  pure (nodeHash, Node nodeData nodeType)
+
+skippingWarning :: Parser a -> Parser a
+skippingWarning parser = do
+  Parser.option "" $ Parser.string "Warning:"
+  Parser.manyTill Parser.anyChar $ Parser.string "\n\n"
+  parser
 
 graphParserBazel5 :: Parser Graph
-graphParserBazel5 = do
-  Parser.option undefined $ Parser.string "Warning:"
-  Parser.manyTill Parser.anyChar $ Parser.lookAhead lineParser
-  let unions = bimap Map.unions Set.unions . unzip
-  graph <- unions <$> lineParser `Parser.sepBy` Parser.endOfLine
-  Parser.many' Parser.endOfLine
+graphParserBazel5 = skippingWarning $ do
+  graph <- mconcat <$> nodeParser `Parser.sepBy1` Parser.endOfLine
+  Parser.skipSpace
   Parser.endOfInput
   pure graph
+
   where
-    lineParser :: Parser Graph
-    lineParser = do
-      nodes@((sourceHash, _) : targets) <- Parser.many1 nodeParser
-      pure (Map.fromList nodes, Set.fromList $ Edge 0 sourceHash . fst <$> targets)
-    nodeParser :: Parser (NodeHash, Node)
+    nodeParser :: Parser Graph
     nodeParser = do
-      nodeType <- Parser.takeWhile1 $ \c -> c /= ':' && c /= '\n'
-      Parser.char ':'
-      nodeData <- Parser.takeTill $ \c -> c == '|' || c == '\n'
-      Parser.option undefined $ Parser.char '|'
-      let nodeHash = Text.decodeUtf8 $ LBSC.toStrict $ toLazyByteString $
-            byteStringHex $ SHA256.hash $ Text.encodeUtf8 $ nodeType <> ":" <> nodeData
-      pure (nodeHash, Node nodeType nodeData)
+      source@(sourceHash, _) <- keyParser <* Parser.char '|'
+      keyParser `Parser.sepBy` Parser.char '|' <&> \targets ->
+        ( Map.fromList $ source : targets
+        , Set.fromList $ Edge 0 sourceHash . fst <$> targets
+        )
+
+exampleBazel5 = Text.unlines
+  [ "Warning: the format of this information may change etc!"
+  , ""
+  , "BLUE_NODE:NodeData{e247f4c}|"
+  , "RED_NODE:NodeData{6566162}|BLUE_NODE:NodeData{e247f4c}|RED_NODE:NodeData{5cedeee}|GREEN_NODE:NodeData{aab8e2e}"
+  , "RED_NODE:NodeData{5cedeee}|GREEN_NODE:NodeData{aab8e2e}"
+  , "GREEN_NODE:NodeData{aab8e2e}|RED_NODE:NodeData{5cedeee}"
+  ]
 
 graphParserBazel6 :: Parser Graph
-graphParserBazel6 = pure (Map.empty, Set.empty)
+graphParserBazel6 = skippingWarning $ do
+  graph <- mconcat <$> Parser.many1 nodeParser
+  Parser.skipSpace
+  Parser.endOfInput
+  pure graph
+
+  where
+    nodeParser :: Parser Graph
+    nodeParser = do
+      Parser.skipSpace
+      (sourceHash, sourceNode) <- keyParser
+      targets <- concat . traverse sequenceA <$> Parser.many' groupParser
+      pure $ mconcat $ targets <&> \(groupNum, (targetHash, targetNode)) ->
+        ( Map.fromList [ (sourceHash, sourceNode), (targetHash, targetNode) ]
+        , Set.singleton $ Edge groupNum sourceHash targetHash
+        )
+
+    groupParser :: Parser (Int, [(NodeHash, Node)])
+    groupParser = do
+      Parser.skipSpace
+      Parser.string "Group "
+      groupNum <- Parser.decimal
+      Parser.char ':'
+      fmap (groupNum, ) $ Parser.many1 $ do
+        Parser.endOfLine
+        Parser.string "    "
+        keyParser <* Parser.endOfLine
+
+exampleBazel6 = Text.unlines
+  [ "Warning: the format of this information may change etc!"
+  , ""
+  , "RED_NODE:NodeData{6566162}"
+  , ""
+  , "  Group 1:"
+  , "    BLUE_NODE:NodeData{e247f4c}"
+  , ""
+  , "    GREEN_NODE:NodeData{aab8e2e}"
+  , ""
+  , "  Group 2:"
+  , "    RED_NODE:NodeData{5cedeee}"
+  , ""
+  , ""
+  , "RED_NODE:NodeData{5cedeee}"
+  , ""
+  , "  Group 1:"
+  , "    GREEN_NODE:NodeData{aab8e2e}"
+  , ""
+  , ""
+  , "GREEN_NODE:NodeData{aab8e2e}"
+  , ""
+  , "  Group 1:"
+  , "    RED_NODE:NodeData{5cedeee}"
+  , ""
+  , ""
+  ]
 
 server :: Sqlite.Database -> IO ()
 server db = do
   memo <- Memo
-    <$> newTVarIO Map.empty -- memoStats
-    <*> newTVarIO Map.empty -- findPathMemo
+    <$> newTVarIO Map.empty -- findPathMemo
+    <*> newTVarIO Map.empty -- floodNodesMemo
     <*> newTVarIO Map.empty -- filterNodesMemo
     <*> newTVarIO Map.empty -- unifyComponentsMemo
-  let withMemo action = liftIO $ runReaderT action memo
-  putStrLn $ "\nOpen this link in your browser: 🔭 \x1b[1;36mhttp://localhost:28581/\x1b[0m\n"
+  let withMemo :: Memoize a -> ActionM a
+      withMemo action = liftIO $ runReaderT action memo
+
+  hSetEncoding stdout utf8
+  putStrLn $ "\nOpen this link in your browser: " <>
+    "🔭 \x1b[1;36mhttp://localhost:28581/\x1b[0m\n"
+
   Web.scotty 28581 $ do
     Web.get "/" $ do
+      -- Uncomment for local development convenience:
+      --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/index.js"
+      --themeCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/theme.css"
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<!DOCTYPE html>"
         , "<html>"
         , "  <head>"
         , "    <title>Skyscope</title>"
-        , "    <link rel=\"icon\" href=\"data:image/svg+xml," <> favicon <> "\">"
         , "    <meta charset=\"UTF-8\">"
-        , "    <script>"
-        ,       Text.decodeUtf8 $ fromMaybe "" $(embedFileIfExists $(do
-                  found <- TH.runIO $ find (pure True) (filePath ~~? "**/frontend/index.js") "."
-                  pure $ TH.LitE $ TH.StringL $ case found of
-                    [ path ] -> path
-                    [] -> ""
-                ))
-        , "    </script>"
-        , "    <style>"
-        ,       Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
-        , "    </style>"
+        , "    <link rel=\"icon\" href=\"data:image/svg+xml," <> favicon <> "\">"
+        , "    <script>" <> indexJs <> "</script>"
+        , "    <style>" <> themeCss <> "</style>"
         , "  </head>"
         , "  <body></body>"
         , "</html>"
         ]
-    Web.post "/filter" $ Json.eitherDecode <$> Web.body >>= \case
-      Right pattern -> Web.json =<< withMemo (filterNodes db 100 pattern)
-      Left err -> badRequest err
+
     Web.post "/path" $ Json.eitherDecode <$> Web.body >>= \case
-      Right (origin, destination) -> Web.json =<< withMemo (findPath db origin destination)
+      Right (origin, destination) -> Web.json =<< do
+        withMemo (findPath db origin destination)
       Left err -> badRequest err
+
+    Web.post "/flood" $ Json.eitherDecode <$> Web.body >>= \case
+      Right (source, pattern, types) -> Web.json =<< do
+        withMemo (floodNodes db 100 source pattern types)
+      Left err -> badRequest err
+
+    Web.post "/filter" $ Json.eitherDecode <$> Web.body >>= \case
+      Right pattern -> Web.json =<< do
+        withMemo (filterNodes db 100 pattern)
+      Left err -> badRequest err
+
     Web.post "/render" $ Json.eitherDecode <$> Web.body >>= \case
-      Right visibleNodes -> do
+      Right nodeStates -> Web.text =<< do
         Web.setHeader "Content-Type" "image/svg+xml"
-        Web.text =<< withMemo (renderSvg db visibleNodes)
+        withMemo (renderGraph db nodeStates)
       Left err -> badRequest err
+
   where
+    themeCss = Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
+    indexJs = Text.decodeUtf8 $ fromMaybe "" $(embedFileIfExists $(do
+      found <- TH.runIO $ find (pure True) (filePath ~~? "**/frontend/index.js") "."
+      pure $ TH.LitE $ TH.StringL $ case found of
+        [ path ] -> path
+        [] -> ""))
+
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
     favicon = "<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 "
       <> "100 100%22><text y=%22.9em%22 font-size=%2290%22>🔭</text></svg>"
-
-filterNodes :: Sqlite.Database -> Int64 -> Text -> Memoize (Int64, Map NodeHash Node)
-filterNodes db limit = memoize "filterNodes" filterNodesMemo $ \pattern -> do
-  SQLInteger total <- liftIO $ Sqlite.executeSqlScalar db
-    [ "SELECT COUNT(hash) FROM node"
-    , "WHERE data LIKE ?" ] [ SQLText pattern ]
-  records <- liftIO $ Sqlite.executeSql db
-    [ "SELECT hash, type, data FROM node"
-    , "WHERE data LIKE ? LIMIT ?;" ]
-    [ SQLText pattern, SQLInteger limit ]
-  pure . (total, ) $ Map.fromList $ records <&> \
-    [ SQLText hash, SQLText nodeType, SQLText nodeData ] ->
-      (hash, Node nodeType nodeData)
 
 findPath :: Sqlite.Database -> NodeHash -> NodeHash -> Memoize [NodeHash]
 findPath db = curry $ memoize "findPath" findPathMemo $ \(origin, destination) -> liftIO $ do
@@ -372,8 +478,31 @@ foreign import ccall safe "path.cpp" c_indexPaths
   -> Ptr CLong -- stepMap
   -> IO CInt
 
-renderSvg :: Sqlite.Database -> Map NodeHash NodeState -> Memoize LazyText.Text
-renderSvg db nodeStates = do
+type Pattern = Text
+
+data QueryResult = QueryResult
+  { resultTotalNodes :: Int64
+  , resultNodes :: NodeMap Node
+  } deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
+
+floodNodes :: Sqlite.Database -> Int -> NodeHash -> Pattern -> Component -> Memoize QueryResult
+floodNodes db limit source pattern types = error "not implemented"
+
+filterNodes :: Sqlite.Database -> Int64 -> Pattern -> Memoize QueryResult
+filterNodes db limit = memoize "filterNodes" filterNodesMemo $ \pattern -> do
+  SQLInteger total <- liftIO $ Sqlite.executeSqlScalar db
+    [ "SELECT COUNT(hash) FROM node"
+    , "WHERE data LIKE ?" ] [ SQLText pattern ]
+  records <- liftIO $ Sqlite.executeSql db
+    [ "SELECT hash, data, type FROM node"
+    , "WHERE data LIKE ? LIMIT ?;" ]
+    [ SQLText pattern, SQLInteger limit ]
+  pure . QueryResult total $ Map.fromList $ records <&> \
+    [ SQLText hash, SQLText nodeData, SQLText nodeType ] ->
+      (hash, Node nodeData nodeType)
+
+renderGraph :: Sqlite.Database -> NodeMap NodeState -> Memoize LazyText.Text
+renderGraph db nodeStates = do -- TODO: memoize 
   edges <- fmap (nub . concat) $ flip Map.traverseWithKey nodeStates $
     \nodeHash state -> liftIO $ Sqlite.executeSql db
       [ "SELECT group_num, s.hash, t.hash FROM edge"
@@ -384,14 +513,17 @@ renderSvg db nodeStates = do
                     let collapsed = state == Collapsed
                         hidden  = (`Map.notMember` nodeStates)
                     in if collapsed && (hidden source || hidden target)
-                        then [] else [ Edge group source target ]
+                        then [] else [ Edge (fromIntegral group) source target ]
           )
-  let nodeIdentityMap :: Map NodeHash NodeHash
-      nodeIdentityMap = Map.fromList $ map (join (,)) $ Map.keys nodeStates <>
+
+  let nodeIdentityMap :: NodeMap NodeHash
+      nodeIdentityMap = Map.fromSet id $ Set.fromList $ Map.keys nodeStates <>
         (edges >>= \(Edge _ source target) -> [ source, target ])
+
   nodeMap <- for nodeIdentityMap $ \nodeHash -> liftIO $ Sqlite.executeSql db
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText nodeHash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
+
   links <- findPathLinks db nodeStates edges
 
   let graph = Text.unlines
@@ -422,6 +554,7 @@ renderSvg db nodeStates = do
                 ] linkEdge
         , "}"
         ]
+
   liftIO $ do
     Text.writeFile "/tmp/skyscope.dot" graph  -- For debugging
     readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
@@ -460,51 +593,49 @@ renderSvg db nodeStates = do
       let f (name, value) = name <> "=\"" <> value <> "\""
       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
 
-type Component = Map NodeHash NodeState
-
 data PathLink = PathLink
   { linkHidden :: Int
   , linkLength :: Int
   , linkEdge :: Edge
   } deriving (Eq, Ord, Show)
 
-findPathLinks :: Sqlite.Database -> Map NodeHash NodeState -> [Edge] -> Memoize [PathLink]
+findPathLinks :: Sqlite.Database -> NodeMap NodeState -> [Edge] -> Memoize [PathLink]
 findPathLinks db nodeStates edges = timed "findPathLinks" $ nub <$> do
   let components = findComponents edges nodeStates
       pairs = concat [ [ (c1, c2), (c2, c1) ] | c1 : cs <- tails components, c2 <- cs ]
   liftIO $ printComponents components
   fmap catMaybes $ for pairs $ uncurry $ unifyComponents db nodeStates
 
-findComponents :: [Edge] -> Map NodeHash NodeState -> [Component]
-findComponents edges nodeStates =
-  let discreteMap = nodeStates $> []
+type Component = NodeMap NodeState
+
+findComponents :: [Edge] -> NodeMap NodeState -> [Component]
+findComponents edges nodes =
+  let discreteMap = nodes $> []
       neighbourMap = flip Map.union discreteMap $
         Map.fromAscListWith (++) $ sortOn fst $ edges >>= \(Edge _ s t) ->
-            case (,) <$> Map.lookup s nodeStates <*> Map.lookup t nodeStates of
-              Just (source, target) ->
-                [ (s, [ (t, target) ])
-                , (t, [ (s, source) ])
-                ]
-              Nothing -> []
-          
-      findComponent :: State (Map NodeHash NodeState) (Maybe Component)
+          case (,) <$> Map.lookup s nodes <*> Map.lookup t nodes of
+            Just (source, target) ->
+              [ (s, [ (t, target) ])
+              , (t, [ (s, source) ])
+              ]
+            Nothing -> []
+
+      findComponent :: State (NodeMap NodeState) (Maybe Component)
       findComponent = do
-        unvisitedNodes <- gets $ Map.difference nodeStates
+        unvisitedNodes <- gets $ Map.difference nodes
         case Map.lookupMin unvisitedNodes of
           Nothing -> pure Nothing
-          Just node -> do
-            nodes <- Map.fromList <$> dfs [ [ node ] ]
-                <&> (`Map.intersection` nodeStates)
-            pure $ Just nodes
+          Just node -> fmap Just $ Map.fromList <$>
+            dfs [ [ node ] ] <&> (`Map.intersection` nodes)
 
       dfs = \case
         [] -> pure []
         [] : stack -> dfs stack
-        (next@(node, state) : siblings) : stack -> do
+        (next@(node, value) : siblings) : stack -> do
           let stack' = siblings : stack
           visited <- gets $ Map.member node
           if visited then dfs stack' else do
-            modify $ Map.insert node state
+            modify $ Map.insert node value
             case Map.lookup node neighbourMap of
               Just neighbours -> (next :) <$> dfs (neighbours : stack')
               Nothing -> dfs stack'
@@ -514,13 +645,14 @@ findComponents edges nodeStates =
       $ flip evalState Map.empty
       $ sequenceA $ repeat findComponent
 
-unifyComponents :: Sqlite.Database -> Map NodeHash NodeState -> Component -> Component -> Memoize (Maybe PathLink)
+unifyComponents :: Sqlite.Database -> NodeMap NodeState -> Component -> Component -> Memoize (Maybe PathLink)
 unifyComponents db nodeStates = curry $ memoize "unifyComponents" unifyComponentsMemo $ \(c1, c2) -> do
   let unify (origin, destination) = findPath db origin destination <&> \path ->
         let pathState = (id &&& flip Map.lookup nodeStates) <$> path
-            hiddenCount = length $ filter (isNothing . snd) (traceValue "\x1b[34mpathState" pathState)
+            hiddenCount = length $ filter (isNothing . snd) pathState
             shortenPath path = nonEmpty =<< dropExpanded <$> nonEmpty path
             dropExpanded = NE.filter $ snd >>> (/= Just Expanded)
+
         in shortenPath pathState >>= \p -> do
               let source = fst $ NE.head p
                   target = fst $ NE.last p
@@ -530,12 +662,13 @@ unifyComponents db nodeStates = curry $ memoize "unifyComponents" unifyComponent
                 , linkLength = NE.length p
                 , linkEdge =  Edge 0 source target
                 }
-      shortest = listToMaybe . traceValue "\x1b[33mordered" . sortOn linkLength . catMaybes
+
+      shortest = listToMaybe . sortOn linkLength . catMaybes
   fmap shortest $ sequenceA $ fmap unify $ (,) <$> Map.keys c1 <*> Map.keys c2
 
 printComponents :: [Component] -> IO ()
 printComponents components = do
-  putStrLn {-"\x1b[1;1H\x1b[2J-} "findComponents:\n"
+  putStrLn "findComponents:\n"
   for_ ([ 0 .. ] `zip` components) $ \(i, nodes) -> do
     putStrLn $ "  \x1b[1;" <> show (31 + i `mod` 7) <> "mCOMPONENT:"
     for_ (Map.assocs nodes) $ \(nodeHash, nodeState) ->
@@ -545,9 +678,9 @@ printComponents components = do
 type Memoize a = ReaderT Memo IO a
 
 data Memo = Memo
-  { memoStats :: TVar (Map String (Int, Int))
-  , findPathMemo :: TVar (Map (NodeHash, NodeHash) [NodeHash])
-  , filterNodesMemo :: TVar (Map Text (Int64, Map NodeHash Node))
+  { findPathMemo :: TVar (Map (NodeHash, NodeHash) [NodeHash])
+  , floodNodesMemo :: TVar (Map (NodeHash, Pattern, Component) QueryResult)
+  , filterNodesMemo :: TVar (Map Pattern QueryResult)
   , unifyComponentsMemo :: TVar (Map (Component, Component) (Maybe PathLink))
   }
 
