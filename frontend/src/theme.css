@@ -188,7 +188,7 @@ g.edge:hover text {
     font-weight: bold;
 }
 
-g.edge:hover path {
+g.edge.Animate path, g.edge:hover path {
     /*stroke: hsl(175, 100%, 50%);*/
     animation: dash 200ms linear;
     animation-iteration-count: infinite;
