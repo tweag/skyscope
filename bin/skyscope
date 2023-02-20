@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euxo pipefail
 
 BAZEL_VERSION="$(bazel version |
   grep -Po '(?<=Build label: ).*'
 )"
 
 case "$BAZEL_VERSION" in
-  5.*) DUMP_OPT="detailed" ;; 6.*) DUMP_OPT="deps" ;;
+  5.*)
+    DUMP_OPT="detailed"
+    SKYSCOPE_OPT="--bazel5"
+    ;;
+  6.*)
+    DUMP_OPT="deps"
+    SKYSCOPE_OPT=""
+    ;;
   *) echo "Bazel version $BAZEL_VERSION not currently supported" && exit 1
 esac
 
@@ -14,5 +21,5 @@ esac
 SKYSCOPE_DIR="${BASH_SOURCE[0]%/bin/skyscope}"
 bazel dump --skyframe=$DUMP_OPT | nix-shell --run "
     cd '$SKYSCOPE_DIR'
-    bazel run //backend:skyscope -- +RTS -N -RTS
+    bazel run //backend:skyscope -- +RTS -N -RTS $SKYSCOPE_OPT "$@"
 " "$SKYSCOPE_DIR/shell.nix"

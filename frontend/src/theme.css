@@ -92,6 +92,7 @@ div.ResultRow                           span.NodeType { color: hsl(  0,  0%, 25%
 div.ResultRow.ActionExecution           span.NodeType { color: hsl(318, 55%, 29%); }
 div.ResultRow.Artifact                  span.NodeType { color: hsl( 71, 55%, 29%); }
 div.ResultRow.ArtifactNestedSet         span.NodeType { color: hsl( 71, 55%, 29%); }
+div.ResultRow.BuildConfiguration        span.NodeType { color: hsl(117, 55%, 29%); }
 div.ResultRow.ClientEnvironmentVariable span.NodeType { color: hsl(163, 55%, 29%); }
 div.ResultRow.ConfiguredTarget          span.NodeType { color: hsl(117, 55%, 29%); }
 div.ResultRow.ContainingPackageLookup   span.NodeType { color: hsl(117, 55%, 29%); }
@@ -110,6 +111,7 @@ g.node                                  text.NodeType {  fill: hsl(  0,  0%, 25%
 g.node.ActionExecution                  text.NodeType {  fill: hsl(318, 55%, 29%); }
 g.node.Artifact                         text.NodeType {  fill: hsl( 71, 55%, 29%); }
 g.node.ArtifactNestedSet                text.NodeType {  fill: hsl( 71, 55%, 29%); }
+g.node.BuildConfiguration               text.NodeType {  fill: hsl(117, 55%, 29%); }
 g.node.ClientEnvironmentVariable        text.NodeType {  fill: hsl(163, 55%, 29%); }
 g.node.ConfiguredTarget                 text.NodeType {  fill: hsl(117, 55%, 29%); }
 g.node.ContainingPackageLookup          text.NodeType {  fill: hsl(117, 55%, 29%); }

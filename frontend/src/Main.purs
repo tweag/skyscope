@@ -7,6 +7,7 @@ import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Core as Argonaut
+import Data.Argonaut.Decode as Argonaut
 import Data.Array ((!!))
 import Data.Array as Array
 import Data.Array.NonEmpty as Array.NonEmpty
@@ -473,42 +474,35 @@ createSearchBox nodeConfiguration = do
         fromRight "" (formatNumber "0,0" total) <> " nodes") nodeCount
 
   searchResults <- createElement "div" "SearchResults" $ Just searchBox
-  let renderResults :: Number -> Object Json -> String -> Effect Unit
-      renderResults total nodes pattern = do
+  let renderResults :: NodeResults -> String -> Effect Unit
+      renderResults results pattern = do
+        let total = results.resultTotalNodes
         nodeCountMax <- Ref.modify (max total) nodeCountMax
         updateNodeCount "found" total
         removeAllChildren searchResults
-        sequence_ $ Object.toArrayWithKey (renderResultRow pattern) nodes
+        sequence_ $ Object.toArrayWithKey (renderResultRow pattern) results.resultNodes
 
-      renderResultRow :: String -> NodeHash -> Json -> Effect Unit
-      renderResultRow pattern hash nodeJson =
-        let node = do
-              node <- Argonaut.toObject nodeJson
-              nodeType <- Argonaut.toString =<< Object.lookup "nodeType" node
-              nodeData <- Argonaut.toString =<< Object.lookup "nodeData" node
-              pure $ nodeType /\ nodeData
-        in case node of
-              Nothing -> error "unexpected find node json"
-              Just (nodeType /\ nodeData) -> do
-                row <- createElement "div" "" $ Just searchResults
-                let updateSelected = nodeConfiguration.get hash >>= case _ of
-                      Nothing -> removeClass row "Selected"
-                      Just _ -> addClass row "Selected"
-                    toggleSelected = nodeConfiguration.get hash >>= case _ of
-                      Nothing -> nodeConfiguration.show hash Expanded *> updateSelected
-                      Just _ -> nodeConfiguration.hide hash *> updateSelected
-                listener <- EventTarget.eventListener $ const toggleSelected
-                EventTarget.addEventListener EventTypes.click
-                  listener false $ Element.toEventTarget row
-                let prettyNodeType = formatNodeType nodeType
-                addClass row prettyNodeType
-                addClass row "ResultRow"
-                setTitle nodeData row
-                updateSelected
-                typeSpan <- createElement "span" "" $ Just row
-                setTextContent prettyNodeType typeSpan
-                addClass typeSpan "NodeType"
-                renderPatternMatch row pattern nodeData
+      renderResultRow :: String -> NodeHash -> { nodeData :: String, nodeType :: String } -> Effect Unit
+      renderResultRow pattern hash node = do
+        row <- createElement "div" "" $ Just searchResults
+        let updateSelected = nodeConfiguration.get hash >>= case _ of
+              Nothing -> removeClass row "Selected"
+              Just _ -> addClass row "Selected"
+            toggleSelected = nodeConfiguration.get hash >>= case _ of
+              Nothing -> nodeConfiguration.show hash Expanded *> updateSelected
+              Just _ -> nodeConfiguration.hide hash *> updateSelected
+        listener <- EventTarget.eventListener $ const toggleSelected
+        EventTarget.addEventListener EventTypes.click
+          listener false $ Element.toEventTarget row
+        let prettyNodeType = formatNodeType node.nodeType
+        addClass row prettyNodeType
+        addClass row "ResultRow"
+        setTitle node.nodeData row
+        updateSelected
+        typeSpan <- createElement "span" "" $ Just row
+        setTextContent prettyNodeType typeSpan
+        addClass typeSpan "NodeType"
+        renderPatternMatch row pattern node.nodeData
 
       renderPatternMatch :: Element -> String -> String -> Effect Unit
       renderPatternMatch row pattern nodeData =
@@ -540,15 +534,9 @@ createSearchBox nodeConfiguration = do
 
   let updateSearch :: Aff Unit
       updateSearch = filterNodes >>= \(resultsJson /\ pattern) ->
-        let results = do
-              array <- Argonaut.toArray resultsJson
-              total <- Argonaut.toNumber =<< array !! 0
-              nodes <- Argonaut.toObject =<< array !! 1
-              pure $ total /\ nodes
-        in case results of
-              Nothing -> error "unexpected find results json"
-              Just (total /\ nodes) -> liftEffect $
-                renderResults total nodes pattern
+        case Argonaut.decodeJson resultsJson of
+          Right results -> liftEffect $ renderResults results pattern
+          Left err -> error $ "unexpected find results json: " <> show err
 
       onPatternInputEvent :: EventType -> (Event -> Effect Unit) -> Effect Unit
       onPatternInputEvent eventType handler = do
@@ -575,6 +563,11 @@ createSearchBox nodeConfiguration = do
       focusPatternInput = traverse_ HTMLElement.focus
                         $ HTMLElement.fromElement patternInput
   pure $ overlay /\ focusPatternInput
+
+type NodeResults =
+  { resultTotalNodes :: Number
+  , resultNodes :: Object { nodeData :: String, nodeType :: String }
+  }
 
 onKeyUp :: String -> Effect Unit -> Effect Unit
 onKeyUp = onKeyEvent EventTypes.keyup
