@@ -13,6 +13,7 @@
 
 module Main where
 
+import Control.Applicative ((<|>))
 import Control.Arrow ((&&&))
 import Control.Category ((>>>))
 import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
@@ -176,7 +177,10 @@ importGraph db = timed "importGraph" $ do
       ]
 
 graphParser :: Parser Graph
-graphParser = do
+graphParser = graphParserBazel5 <|> graphParserBazel6
+
+graphParserBazel5 :: Parser Graph
+graphParserBazel5 = do
   Parser.option undefined $ Parser.string "Warning:"
   Parser.manyTill Parser.anyChar $ Parser.lookAhead lineParser
   let unions = bimap Map.unions Set.unions . unzip
@@ -198,6 +202,9 @@ graphParser = do
       let nodeHash = Text.decodeUtf8 $ LBSC.toStrict $ toLazyByteString $
             byteStringHex $ SHA256.hash $ Text.encodeUtf8 $ nodeType <> ":" <> nodeData
       pure (nodeHash, Node nodeType nodeData)
+
+graphParserBazel6 :: Parser Graph
+graphParserBazel6 = pure (Map.empty, Set.empty)
 
 server :: Sqlite.Database -> IO ()
 server db = do
