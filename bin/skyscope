@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Only tested on Bazel 5 so far. Known to be broken on Bazel 6.
-BAZEL_VERSION="$(bazel version | grep -Po '(?<=Build label: ).*')"
-if [[ "$BAZEL_VERSION" != 5.* ]]; then
-    echo "Bazel version $BAZEL_VERSION not currently supported"
-    exit 1 # https://github.com/tweag/skyscope/issues/9
-fi
+BAZEL_VERSION="$(bazel version |
+  grep -Po '(?<=Build label: ).*'
+)"
+
+case "$BAZEL_VERSION" in
+  5.*) DUMP_OPT="detailed" ;; 6.*) DUMP_OPT="deps" ;;
+  *) echo "Bazel version $BAZEL_VERSION not currently supported" && exit 1
+esac
 
 # Dump Skyframe graph and pipe it to Skyscope.
 SKYSCOPE_DIR="${BASH_SOURCE[0]%/bin/skyscope}"
-bazel dump --skyframe=detailed | nix-shell --run "
+bazel dump --skyframe=$DUMP_OPT | nix-shell --run "
     cd '$SKYSCOPE_DIR'
     bazel run //backend:skyscope -- +RTS -N -RTS
 " "$SKYSCOPE_DIR/shell.nix"
