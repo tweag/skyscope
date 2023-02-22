@@ -1,3 +1,55 @@
+div#imports {
+    margin: 10px 10px;
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+div.import {
+    align-items: center;
+    color: hsl(0, 0%, 25%);
+    display: flex;
+    font-family: monospace;
+    font-size: 16px;
+    padding: 0px 30px;
+    text-decoration: none;
+}
+
+div.import:hover a {
+    font-weight: bold;
+}
+
+div.import a:active {
+    color: hsl(0, 0%, 0%);
+}
+
+div.import a {
+    color: hsl(0, 0%, 25%);
+    text-decoration: none;
+}
+
+div.import span {
+    padding: 10px 10px;
+}
+
+div.import span.importPath {
+    font-size: 13px;
+    flex: 1 1;
+}
+
+div.import input.delete {
+    width: 16px;
+    height: 16px;
+}
+
+div.button {
+    text-align: right;
+}
+
+div.button input {
+    padding: 5px 10px;
+    margin: 5px 0px;
+}
+
 div#graph {
     text-align: center;
     margin-top: 128px;

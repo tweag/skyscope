@@ -1,3 +1,7 @@
+export function getImportId() {
+    return importId;
+}
+
 export function scrollIntoView(element) {
     return function () {
         const documentElement = document.documentElement;

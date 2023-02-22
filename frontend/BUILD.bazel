@@ -1,4 +1,5 @@
 exports_files( [
+    "src/index.js",
     "src/theme.css",
 ])
 
@@ -8,14 +9,14 @@ genrule(
         ":packages.dhall",
         ":spago.dhall",
     ] + glob(["src/**/*.purs"]) + glob(["src/**/*.js"]),
-    outs = ["index.js"],
+    outs = ["main.js"],
     tools = ["@spago//:bin/spago"],
     cmd = """
-        INDEX_JS="$$(realpath $@)"
+        MAIN_JS="$$(realpath $@)"
         SPAGO="$$(realpath "$(execpath @spago//:bin/spago)")"
-        mkdir -p "$$(dirname "$$INDEX_JS")"
+        mkdir -p "$$(dirname "$$MAIN_JS")"
         cd frontend
-        "$$SPAGO" -c skip bundle-app -t "$$INDEX_JS"
+        "$$SPAGO" -c skip bundle-app -t "$$MAIN_JS"
     """,
     visibility = ["//visibility:public"],
 )

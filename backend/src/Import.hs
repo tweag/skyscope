@@ -21,7 +21,7 @@ import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Foldable (for_)
-import Data.Functor ((<&>), void)
+import Data.Functor ((<&>))
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (uncons)
@@ -40,36 +40,37 @@ import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf)
 import Prelude
 import qualified Sqlite
-import System.Directory (getCurrentDirectory)
-import System.Posix.Temp (mkdtemp)
-import System.Process (readProcess)
 
 import Common
 import Model
 
-initialiseDatabase :: IO FilePath
-initialiseDatabase = do
-  dir <- mkdtemp "skyscope"
-  let path = dir <> "/skyscope.sqlite"
-  absolutePath <- getCurrentDirectory <&> (<> ("/" <> path))
-  putStrLn $ "\x1b[1mimporting graph:\x1b[0;30m " <> absolutePath <> "\x1b[0m"
+importer :: FilePath -> IO ()
+importer path = do
+  putStrLn $ "importing graph: " <> path
   Sqlite.withDatabase path $ \db -> do
     optimiseDatabaseAccess db
     importGraph db
-  pure path
+  putStrLn $ "indexing"
+  Sqlite.withDatabase path $ \db -> do
+    optimiseDatabaseAccess db
+    indexing <- indexPathsAsync db
+    atomically $ readTVar indexing >>= \case
+      False -> pure ()
+      True -> retry
 
 optimiseDatabaseAccess :: Sqlite.Database -> IO ()
 optimiseDatabaseAccess db = Sqlite.executeStatements db
-  [ [ "pragma mmap_size = 1073741824;" ]
+  [ [ "pragma mmap_size = 10737418240;" ]
   , [ "pragma journal_mode = WAL;" ]
   , [ "pragma synchronous = off;" ]
   ]
 
-indexPathsAsync :: Sqlite.Database -> FilePath -> IO ()
-indexPathsAsync db path = do
+indexPathsAsync :: Sqlite.Database -> IO (TVar Bool)
+indexPathsAsync db = do
   progress <- newTVarIO (0, 1)
   indexStartTime <- Clock.getCurrentTime
   forkIO $ indexPaths db progress
+  indexing <- newTVarIO True
   let showProgress = do
         threadDelay 100_000
         (done, total) <- readTVarIO progress
@@ -81,10 +82,10 @@ indexPathsAsync db path = do
             <> show done <> " nodes (" <> show total <> " total, "
             <> show expectedTime <> " seconds remaining)\x1b[0m"
         if done < total then showProgress else do
-            dbSize <- readProcess "bash" [ "-c", "sync; sleep 1; ls -sh " <> path <> " | grep -Po '^\\w+'" ] ""
             putStrLn $ "  time taken = " <> show timeTaken <> " seconds"
-            putStrLn $ "  database size = " <> dbSize
-  void $ forkIO showProgress
+            atomically $ writeTVar indexing False
+  forkIO showProgress
+  pure indexing
 
 importGraph :: Sqlite.Database -> IO ()
 importGraph db = timed "importGraph" $ do
