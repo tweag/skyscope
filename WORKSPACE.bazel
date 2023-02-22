@@ -22,6 +22,7 @@ stack_snapshot(
       "zlib": ["@zlib.dev//:zlib"],
     },
     packages = [
+        "HList-0.5.2.0",
         "aeson",
         "attoparsec",
         "bytestring",
