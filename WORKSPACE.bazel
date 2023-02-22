@@ -17,7 +17,7 @@ load("@rules_haskell//haskell:cabal.bzl", "stack_snapshot")
 
 stack_snapshot(
     name = "stackage",
-    snapshot = "lts-18.18",
+    snapshot = "lts-19.33",
     extra_deps = {
       "zlib": ["@zlib.dev//:zlib"],
     },
@@ -44,30 +44,33 @@ stack_snapshot(
         "unix",
         "zlib",
     ],
+    components = {
+        "attoparsec": [
+            "lib:attoparsec",
+            "lib:attoparsec-internal",
+        ],
+    },
+    components_dependencies = {
+        "attoparsec": """{"lib:attoparsec": ["lib:attoparsec-internal"]}""",
+    },
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
 
-nixpkgs_git_repository(
-    name = "nixpkgs_21.11",
-    revision = "21.11",
-    sha256 = "c77bb41cf5dd82f4718fa789d49363f512bb6fa6bc25f8d60902fe2d698ed7cc",
-)
-
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
-nixpkgs_cc_configure(repository = "@nixpkgs_21.11")
+nixpkgs_cc_configure(repository = "@nixpkgs")
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
 
-nixpkgs_python_configure(repository = "@nixpkgs_21.11")
+nixpkgs_python_configure(repository = "@nixpkgs")
 
 load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
 
 haskell_register_ghc_nixpkgs(
-    repository = "@nixpkgs_21.11",
+    repository = "@nixpkgs",
     attribute_path = "ghc",
-    version = "8.10.7",
+    version = "9.0.2",
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
@@ -75,13 +78,13 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
 nixpkgs_package(
     name = "nixpkgs_zlib",
     attribute_path = "zlib",
-    repository = "@nixpkgs_21.11",
+    repository = "@nixpkgs",
 )
 
 nixpkgs_package(
     name = "zlib.dev",
     build_file = "//backend:zlib.BUILD.bazel",
-    repository = "@nixpkgs_21.11",
+    repository = "@nixpkgs",
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_local_repository")
