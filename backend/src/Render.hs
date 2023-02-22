@@ -118,8 +118,8 @@ renderGraph db nodeStates = do -- TODO: memoize
           nodeState = Map.lookup nodeHash nodeStates
           hidden = nodeState == Nothing
       in "    node_" <> nodeHash <> graphvizAttributes
-              [ ("width", if hidden then "0.1" else "3.0")
-              , ("height", if hidden then "0.1" else "0.6")
+              [ ("width", if hidden then "0.2" else "3.0")
+              , ("height", if hidden then "0.2" else "0.6")
               , ("shape", if hidden then "point" else "box")
               , ("fixedsize", "true")
               , ("label", label)
@@ -219,7 +219,7 @@ unifyComponents db nodeStates = curry $ memoize "unifyComponents" getUnifyCompon
               pure $ PathLink
                 { linkHidden = hiddenCount
                 , linkLength = NE.length p
-                , linkEdge =  Edge 0 source target
+                , linkEdge = Edge 0 source target
                 }
 
       shortest = listToMaybe . sortOn linkLength . catMaybes

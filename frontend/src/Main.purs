@@ -186,7 +186,8 @@ makeTools graph nodeConfiguration = do
     openPath :: Element -> Effect Unit
     openPath edge = Element.id edge <#> split (Pattern "_") >>= case _ of
       [ origin, destination ] -> runAff do
-          result <- Affjax.post Affjax.ResponseFormat.json "/path"
+          url <- liftEffect $ getImportId <#> (_ <> "/path")
+          result <- Affjax.post Affjax.ResponseFormat.json url
             $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray
             [ Argonaut.fromString origin
             , Argonaut.fromString destination
@@ -281,7 +282,8 @@ attachGraphRenderer graph nodeConfiguration onClick = do
   where
     makeRenderer :: NodeConfiguration -> Effect (Aff Element)
     makeRenderer nodeConfiguration = makeThrottledAction do
-      result <- Affjax.post Affjax.ResponseFormat.document "/render"
+      url <- liftEffect $ getImportId <#> (_ <> "/render")
+      result <- Affjax.post Affjax.ResponseFormat.document url
         <<< Just <<< Affjax.RequestBody.json =<< liftEffect nodeConfiguration.json
       liftEffect $ case result of
         Left err -> error $ Affjax.printError err
@@ -460,7 +462,8 @@ createSearchBox nodeConfiguration = do
     previous <- liftEffect $ Ref.read previousPattern
     liftEffect $ Ref.write (Just pattern) previousPattern
     if Just pattern == previous then error "pattern unchanged" else do
-      result <- Affjax.post Affjax.ResponseFormat.json "/filter"
+      url <- liftEffect $ getImportId <#> (_ <> "/filter")
+      result <- Affjax.post Affjax.ResponseFormat.json url
         $ Just $ Affjax.RequestBody.json $ Argonaut.fromString
         $ "%" <> pattern <> "%"
       case result of
@@ -690,6 +693,8 @@ getElementsByTagName name element = HTMLCollection.toArray =<<
 getElementById :: String -> Effect (Maybe Element)
 getElementById id = NonElementParentNode.getElementById id =<<
   HTMLDocument.toNonElementParentNode <$> (Window.document =<< HTML.window)
+
+foreign import getImportId :: Effect String
 
 foreign import scrollIntoView :: Element -> Effect Unit
 

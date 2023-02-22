@@ -19,7 +19,6 @@ import Control.Exception (Exception, bracket, catchJust, throw)
 import Control.Monad (when)
 import Data.Bifunctor (first)
 import Data.Foldable (for_)
-import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock (addUTCTime, getCurrentTime)
@@ -28,7 +27,7 @@ import qualified Database.SQLite3 as SQLite3
 import GHC.Stack (HasCallStack)
 import Prelude
 
-withDatabase :: FilePath -> (Database -> IO ()) -> IO ()
+withDatabase :: FilePath -> (Database -> IO a) -> IO a
 withDatabase path application =
   let open = SQLite3.open $ Text.pack path
   in bracket open SQLite3.close application
@@ -106,9 +105,9 @@ batchInsertInternal varLimit database table columns rows = handleConflict $ do
   when (length remainder > 0) $ withInsertRows (length remainder) $
     insert $ concat remainder
 
-fromSQLInteger :: SQLData -> Maybe Int64
+fromSQLInteger :: Integral a => SQLData -> Maybe a
 fromSQLInteger = \case
-  SQLInteger value -> Just value
+  SQLInteger value -> Just $ fromIntegral value
   SQLNull -> Nothing
 
 fromSQLText :: SQLData -> Maybe Text
