@@ -67,7 +67,7 @@ import Network.HTTP.Types.Status (badRequest400)
 import Prelude
 import qualified Sqlite
 import System.Directory (getCurrentDirectory)
-import System.Environment (getArgs)
+import qualified System.Environment as Env
 import System.Exit (ExitCode(..))
 import System.FilePath.Find ((~~?), filePath, find)
 import System.IO (hSetEncoding, stdout, utf8)
@@ -151,11 +151,10 @@ type Graph = (NodeMap Node, Set Edge)
 importGraph :: Sqlite.Database -> IO ()
 importGraph db = timed "importGraph" $ do
   createSchema db
-  bazel5Flag <- ("--bazel5" `elem`) <$> getArgs
-  let (parser, version) = if bazel5Flag
-        then (graphParserBazel5, 5)
-        else (graphParserBazel6, 6)
-  putStrLn $ "Using Bazel " <> show version <> " Skyframe parser"
+  legacy <- getSkyscopeEnv "LEGACY_BAZEL"
+  let parser = if isJust legacy
+        then graphParserLegacy
+        else graphParser
   (nodes, edges) <- Text.getContents <&> Parser.parseOnly parser >>= \case
     Left err -> error $ "failed to parse skyframe graph: " <> err
     Right graph -> pure graph
@@ -203,14 +202,14 @@ importGraph db = timed "importGraph" $ do
         ]
       ]
 
--- $> checkParserEquivalence
+-- $> Main.checkParserEquivalence
 
 checkParserEquivalence :: IO ()
 checkParserEquivalence = do
   let zeroEdges = second $ Set.map $ \(Edge _ s t) -> Edge 0 s t
-      resultBazel5 = Parser.parseOnly graphParserBazel5 exampleBazel5
-      resultBazel6 = Parser.parseOnly graphParserBazel6 exampleBazel6
-  if resultBazel5 == (zeroEdges <$> resultBazel6) then pure () else
+      resultLegacy = Parser.parseOnly graphParserLegacy skyframeExampleLegacy
+      result = Parser.parseOnly graphParser skyframeExample
+  if resultLegacy == (zeroEdges <$> result) then pure () else
       error $ "parsers not equivalent"
 
 keyParser :: Parser (NodeHash, Node)
@@ -228,8 +227,8 @@ skippingWarning parser = do
   Parser.manyTill Parser.anyChar $ Parser.string "\n\n"
   parser
 
-graphParserBazel5 :: Parser Graph
-graphParserBazel5 = skippingWarning $ do
+graphParserLegacy :: Parser Graph
+graphParserLegacy = skippingWarning $ do
   graph <- mconcat <$> nodeParser `Parser.sepBy1` Parser.endOfLine
   Parser.skipSpace
   Parser.endOfInput
@@ -244,17 +243,17 @@ graphParserBazel5 = skippingWarning $ do
         , Set.fromList $ Edge 0 sourceHash . fst <$> targets
         )
 
-exampleBazel5 = Text.unlines
+skyframeExampleLegacy = Text.unlines
   [ "Warning: the format of this information may change etc!"
   , ""
   , "BLUE_NODE:NodeData{e247f4c}|"
-  , "RED_NODE:NodeData{6566162}|BLUE_NODE:NodeData{e247f4c}|RED_NODE:NodeData{5cedeee}|GREEN_NODE:NodeData{aab8e2e}"
+  , "RED_NODE:NodeData{6566162}|GREEN_NODE:NodeData{aab8e2e}|BLUE_NODE:NodeData{e247f4c}|RED_NODE:NodeData{5cedeee}"
   , "RED_NODE:NodeData{5cedeee}|GREEN_NODE:NodeData{aab8e2e}"
   , "GREEN_NODE:NodeData{aab8e2e}|RED_NODE:NodeData{5cedeee}"
   ]
 
-graphParserBazel6 :: Parser Graph
-graphParserBazel6 = skippingWarning $ do
+graphParser :: Parser Graph
+graphParser = skippingWarning $ do
   graph <- mconcat <$> Parser.many1 nodeParser
   Parser.skipSpace
   Parser.endOfInput
@@ -282,7 +281,7 @@ graphParserBazel6 = skippingWarning $ do
         Parser.string "    "
         keyParser <* Parser.endOfLine
 
-exampleBazel6 = Text.unlines
+skyframeExample = Text.unlines
   [ "Warning: the format of this information may change etc!"
   , ""
   , "RED_NODE:NodeData{6566162}"
@@ -326,9 +325,8 @@ server db = do
 
   Web.scotty 28581 $ do
     Web.get "/" $ do
-      -- Uncomment for local development convenience:
-      --indexJs <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/index.js"
-      --themeCss <- liftIO $ Text.decodeUtf8 <$> BS.readFile "/home/ben/git/skyscope/frontend/src/theme.css"
+      indexJs <- liftIO indexJs
+      themeCss <- liftIO themeCss
       Web.html $ LazyText.fromStrict $ Text.unlines
         [ "<!DOCTYPE html>"
         , "<html>"
@@ -345,32 +343,37 @@ server db = do
 
     Web.post "/path" $ Json.eitherDecode <$> Web.body >>= \case
       Right (origin, destination) -> Web.json =<< do
-        withMemo (findPath db origin destination)
+        withMemo $ findPath db origin destination
       Left err -> badRequest err
 
     Web.post "/flood" $ Json.eitherDecode <$> Web.body >>= \case
       Right (source, pattern, types) -> Web.json =<< do
-        withMemo (floodNodes db 100 source pattern types)
+        withMemo $ floodNodes db 100 source pattern types
       Left err -> badRequest err
 
     Web.post "/filter" $ Json.eitherDecode <$> Web.body >>= \case
       Right pattern -> Web.json =<< do
-        withMemo (filterNodes db 100 pattern)
+        withMemo $ filterNodes db 100 pattern
       Left err -> badRequest err
 
     Web.post "/render" $ Json.eitherDecode <$> Web.body >>= \case
       Right nodeStates -> Web.text =<< do
         Web.setHeader "Content-Type" "image/svg+xml"
-        withMemo (renderGraph db nodeStates)
+        withMemo $ renderOutput <$> renderGraph db nodeStates
       Left err -> badRequest err
 
   where
-    themeCss = Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
-    indexJs = Text.decodeUtf8 $ fromMaybe "" $(embedFileIfExists $(do
-      found <- TH.runIO $ find (pure True) (filePath ~~? "**/frontend/index.js") "."
-      pure $ TH.LitE $ TH.StringL $ case found of
-        [ path ] -> path
-        [] -> ""))
+    indexJs = getSkyscopeEnv "INDEX_JS" >>= \case
+      Nothing -> pure $ Text.decodeUtf8 $ fromMaybe "" $(embedFileIfExists $(do
+        found <- TH.runIO $ find (pure True) (filePath ~~? "**/frontend/index.js") "."
+        pure $ TH.LitE $ TH.StringL $ case found of
+          [ path ] -> path
+          [] -> ""))
+      Just path -> Text.readFile path
+
+    themeCss = getSkyscopeEnv "THEME_CSS" >>= \case
+      Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
+      Just path -> Text.readFile path
 
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
     favicon = "<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 "
@@ -481,7 +484,7 @@ foreign import ccall safe "path.cpp" c_indexPaths
 type Pattern = Text
 
 data QueryResult = QueryResult
-  { resultTotalNodes :: Int64
+  { resultTotalNodes :: Int
   , resultNodes :: NodeMap Node
   } deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
@@ -497,11 +500,19 @@ filterNodes db limit = memoize "filterNodes" filterNodesMemo $ \pattern -> do
     [ "SELECT hash, data, type FROM node"
     , "WHERE data LIKE ? LIMIT ?;" ]
     [ SQLText pattern, SQLInteger limit ]
-  pure . QueryResult total $ Map.fromList $ records <&> \
+  pure . QueryResult (fromIntegral total)
+    $ Map.fromList $ records <&> \
     [ SQLText hash, SQLText nodeData, SQLText nodeType ] ->
       (hash, Node nodeData nodeType)
 
-renderGraph :: Sqlite.Database -> NodeMap NodeState -> Memoize LazyText.Text
+data RenderResult = RenderResult
+  { renderOutput :: LazyText.Text
+  , renderTimePathFinding :: Int
+  , renderTimeRendering :: Int
+  , renderTimeTotal :: Int
+  }
+
+renderGraph :: Sqlite.Database -> NodeMap NodeState -> Memoize RenderResult
 renderGraph db nodeStates = do -- TODO: memoize 
   edges <- fmap (nub . concat) $ flip Map.traverseWithKey nodeStates $
     \nodeHash state -> liftIO $ Sqlite.executeSql db
@@ -519,7 +530,6 @@ renderGraph db nodeStates = do -- TODO: memoize
   let nodeIdentityMap :: NodeMap NodeHash
       nodeIdentityMap = Map.fromSet id $ Set.fromList $ Map.keys nodeStates <>
         (edges >>= \(Edge _ source target) -> [ source, target ])
-
   nodeMap <- for nodeIdentityMap $ \nodeHash -> liftIO $ Sqlite.executeSql db
     [ "SELECT type, data FROM node WHERE hash = ?;" ] [ SQLText nodeHash ] <&> \
     [ [ SQLText nodeType, SQLText nodeData ] ] -> Node nodeType nodeData
@@ -555,11 +565,13 @@ renderGraph db nodeStates = do -- TODO: memoize
         , "}"
         ]
 
-  liftIO $ do
+  renderOutput <- liftIO $ do
     Text.writeFile "/tmp/skyscope.dot" graph  -- For debugging
     readProcessWithExitCode "dot" [ "-Tsvg" ] graph <&> \case
       (ExitFailure code, _, err) -> error $ "dot exit " <> show code <> ": " <> Text.unpack err
       (ExitSuccess, svg, _) -> LazyText.fromStrict svg
+
+  pure $ RenderResult renderOutput 0 0 0
 
   where
     graphvizNode :: NodeHash -> Node -> Text
@@ -603,7 +615,6 @@ findPathLinks :: Sqlite.Database -> NodeMap NodeState -> [Edge] -> Memoize [Path
 findPathLinks db nodeStates edges = timed "findPathLinks" $ nub <$> do
   let components = findComponents edges nodeStates
       pairs = concat [ [ (c1, c2), (c2, c1) ] | c1 : cs <- tails components, c2 <- cs ]
-  liftIO $ printComponents components
   fmap catMaybes $ for pairs $ uncurry $ unifyComponents db nodeStates
 
 type Component = NodeMap NodeState
@@ -705,7 +716,7 @@ timed label action = do
   startTime <- liftIO $ Clock.getCurrentTime
   result <- action
   endTime <- liftIO $ Clock.getCurrentTime
-  liftIO $ putStrLn $ "\n" <> label <> " took " <> show
+  liftIO $ putStrLn $ label <> " took " <> show
     ( Clock.nominalDiffTimeToSeconds
     $ Clock.diffUTCTime endTime startTime
     ) <> " seconds"
@@ -713,3 +724,6 @@ timed label action = do
 
 traceValue :: Show a => String -> a -> a
 traceValue label x = trace (label <> " = " <> show x) x
+
+getSkyscopeEnv :: String -> IO (Maybe String)
+getSkyscopeEnv name = Env.lookupEnv $ "SKYSCOPE_" <> name
