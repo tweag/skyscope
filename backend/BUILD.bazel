@@ -5,7 +5,13 @@ haskell_toolchain_library(name = "base")
 haskell_binary(
     name = "skyscope",
     srcs = [
+        ":src/Common.hs",
+        ":src/Import.hs",
         ":src/Main.hs",
+        ":src/Model.hs",
+        ":src/Query.hs",
+        ":src/Render.hs",
+        ":src/Server.hs",
         ":src/Sqlite.hs",
     ],
     extra_srcs = [
@@ -15,6 +21,7 @@ haskell_binary(
     deps = [
         ":base",
         ":path",
+        "@stackage//:HList",
         "@stackage//:aeson",
         "@stackage//:attoparsec",
         "@stackage//:bytestring",
