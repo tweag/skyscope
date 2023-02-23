@@ -18,6 +18,7 @@ load("@rules_haskell//haskell:cabal.bzl", "stack_snapshot")
 stack_snapshot(
     name = "stackage",
     snapshot = "lts-19.33",
+    stack_snapshot_json = "//:stackage_snapshot.json",
     extra_deps = {
       "zlib": ["@zlib.dev//:zlib"],
     },
