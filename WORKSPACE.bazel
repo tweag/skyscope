@@ -4,9 +4,9 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
     name = "io_tweag_rules_nixpkgs",
-    sha256 = "9ba9d8196b8d08db273228088527b3404f4ca07d869c362033d0e86b83ea4d3d",
-    strip_prefix = "rules_nixpkgs-flake-lock-support",
-    urls = ["https://github.com/tweag/rules_nixpkgs/archive/flake-lock-support.tar.gz"],
+    sha256 = "1f3d86577eb1b85881f60c9eb1eb420c64d2ec8b9c951dbd66394db20cb5ddb1",
+    strip_prefix = "rules_nixpkgs-d28e07001f2c2386162cb51964f02f6c9b67628a",
+    urls = ["https://github.com/tweag/rules_nixpkgs/archive/d28e07001f2c2386162cb51964f02f6c9b67628a.tar.gz"],
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:repositories.bzl", "rules_nixpkgs_dependencies")
