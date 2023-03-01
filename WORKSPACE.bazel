@@ -3,6 +3,16 @@ workspace(name = "skyscope")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
+    name = "io_tweag_rules_nixpkgs",
+    sha256 = "9ba9d8196b8d08db273228088527b3404f4ca07d869c362033d0e86b83ea4d3d",
+    strip_prefix = "rules_nixpkgs-flake-lock-support",
+    urls = ["https://github.com/tweag/rules_nixpkgs/archive/flake-lock-support.tar.gz"],
+)
+
+load("@io_tweag_rules_nixpkgs//nixpkgs:repositories.bzl", "rules_nixpkgs_dependencies")
+rules_nixpkgs_dependencies()
+
+http_archive(
     name = "rules_haskell",
     sha256 = "2a07b55c30e526c07138c717b0343a07649e27008a873f2508ffab3074f3d4f3",
     strip_prefix = "rules_haskell-0.16",
@@ -10,7 +20,6 @@ http_archive(
 )
 
 load("@rules_haskell//haskell:repositories.bzl", "rules_haskell_dependencies")
-
 rules_haskell_dependencies()
 
 load("@rules_haskell//haskell:cabal.bzl", "stack_snapshot")
@@ -98,8 +107,7 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_local_repository")
 
 nixpkgs_local_repository(
     name = "nixpkgs",
-    nix_file = "//:nixpkgs.nix",
-    nix_file_deps = ["//:nixpkgs.json"],
+    nix_flake_lock_file = "//:flake.lock",
 )
 
 nixpkgs_package(
