@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+nix-cmd() {
+  # Users may not have enabled flakes in nix.conf so do it explicitly via cli args.
+  nix --extra-experimental-features nix-command --extra-experimental-features flakes "$@"
+}
+
+# Wrapper function for running skyscope backend.
+run-skyscope() {
+  (
+    cd "${BASH_SOURCE[0]%/bin/skyscope}"
+    nix-cmd develop --command bazel run //backend:skyscope -- +RTS -N -RTS "$@"
+  )
+}
+
 # Find the version used in this workspace.
 BAZEL_VERSION="$(bazel version |
   grep -Po '(?<=Build label: ).*'
@@ -22,15 +35,6 @@ PID_FILE="$HOME/.skyscope/server.pid"
 PID=$(cat "$PID_FILE" 2>/dev/null) && {
   kill $PID || true
   rm $PID_FILE
-}
-
-# Wrapper function for running skyscope binary.
-run-skyscope() {
-  SKYSCOPE_DIR="${BASH_SOURCE[0]%/bin/skyscope}"
-  nix-shell --run "
-      cd '$SKYSCOPE_DIR'
-      bazel run //backend:skyscope -- +RTS -N -RTS $*
-  " "$SKYSCOPE_DIR/shell.nix"
 }
 
 # Launch the server.
