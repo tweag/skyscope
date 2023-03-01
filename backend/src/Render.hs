@@ -50,7 +50,7 @@ data RenderResult = RenderResult
 renderGraph
   :: (HasUnifyComponentsMemo r, HasFindPathMemo r)
   => Sqlite.Database -> NodeMap NodeState -> Memoize r RenderResult
-renderGraph db nodeStates = do -- TODO: memoize
+renderGraph db nodeStates = do -- TODO: memoize rendered svgs
 
   let selectEdges :: NodeHash -> Text -> IO [[SQLData]]
       selectEdges nodeHash whereClause = Sqlite.executeSql db

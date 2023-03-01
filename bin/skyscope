@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-nix-cmd() {
+build-skyscope() {
   # Users may not have enabled flakes in nix.conf so do it explicitly via cli args.
-  nix --extra-experimental-features nix-command --extra-experimental-features flakes "$@"
+  nix develop \
+    --extra-experimental-features flakes \
+    --extra-experimental-features nix-command \
+    --command bazel build //backend:skyscope
 }
 
-# Wrapper function for running skyscope backend.
-run-skyscope() {
-  (
-    cd "${BASH_SOURCE[0]%/bin/skyscope}"
-    nix-cmd develop --command bazel run //backend:skyscope -- +RTS -N -RTS "$@"
-  )
-}
+run-skyscope() {(
+  cd "${BASH_SOURCE[0]%/bin/skyscope}"
+  SKYSCOPE_BIN="bazel-bin/backend/skyscope"
+  [[ -x "$SKYSCOPE_BIN" ]] || build-skyscope
+  "$SKYSCOPE_BIN" +RTS -N -RTS "$@"
+)}
 
 # Find the version used in this workspace.
-BAZEL_VERSION="$(bazel version |
-  grep -Po '(?<=Build label: ).*'
+BAZEL_VERSION="$(bazel version | grep -Po '(?<=Build label: ).*'
 )"
 
 # Determine required options for version.
