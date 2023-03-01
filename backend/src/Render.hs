@@ -51,18 +51,24 @@ renderGraph
   :: (HasUnifyComponentsMemo r, HasFindPathMemo r)
   => Sqlite.Database -> NodeMap NodeState -> Memoize r RenderResult
 renderGraph db nodeStates = do -- TODO: memoize
+
+  let selectEdges :: NodeHash -> Text -> IO [[SQLData]]
+      selectEdges nodeHash whereClause = Sqlite.executeSql db
+        [ "SELECT group_num, s.hash, t.hash FROM edge"
+        , "INNER JOIN node AS s ON s.idx = edge.source"
+        , "INNER JOIN node AS t ON t.idx = edge.target"
+        , "WHERE " <> whereClause <> ";"
+        ] [ SQLText nodeHash ]
   edges <- fmap (nub . concat) $ flip Map.traverseWithKey nodeStates $
-    \nodeHash state -> liftIO $ Sqlite.executeSql db
-      [ "SELECT group_num, s.hash, t.hash FROM edge"
-      , "INNER JOIN node AS s ON s.idx = edge.source"
-      , "INNER JOIN node AS t ON t.idx = edge.target"
-      , "WHERE s.hash = ?1 OR t.hash = ?1;" ] [ SQLText nodeHash ]
-      <&> (>>= \[ SQLInteger group, SQLText source, SQLText target ] ->
+    \nodeHash state -> liftIO $ mconcat
+      [ selectEdges nodeHash "s.hash = ?1"
+      , selectEdges nodeHash "t.hash = ?1"
+      ] <&> (>>= \[ SQLInteger group, SQLText source, SQLText target ] ->
                     let collapsed = state == Collapsed
                         hidden  = (`Map.notMember` nodeStates)
                     in if collapsed && (hidden source || hidden target)
                         then [] else [ Edge (fromIntegral group) source target ]
-          )
+            )
 
   let nodeIdentityMap :: NodeMap NodeHash
       nodeIdentityMap = Map.fromSet id $ Set.fromList $ Map.keys nodeStates <>
