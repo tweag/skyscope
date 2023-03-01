@@ -48,7 +48,7 @@ DB_TEMPLATE="$(basename "$WORKSPACE")-XXXXX.sqlite"
 IMPORT_DIR="$HOME/.skyscope/imports"
 mkdir -p "$IMPORT_DIR"
 DB_PATH="$(mktemp -p "$IMPORT_DIR" "$DB_TEMPLATE")"
-bazel dump --skyframe=$DUMP_OPT | run-skyscope import "$DB_PATH"
+(sleep 1; bazel dump --skyframe=$DUMP_OPT) | run-skyscope import "$DB_PATH"
 
 # Let the server know about the imported graph.
 URL_BASE="http://localhost:28581"
