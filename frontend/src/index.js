@@ -16,11 +16,15 @@ window.onload = function() {
         checkbox.checked = false;
         checkbox.onchange = e => update();
     });
+    const confirmDelete = () => {
+        const count = getCheckedCount();
+        return window.confirm(`Really delete ${count} import${count == 1 ? "" : "s"}?`);
+    };
     button.onclick = e => {
         if (getCheckedCount() == 0) {
             checkboxes.forEach(checkbox => checkbox.checked = true);
             update();
-        } else {
+        } else if (confirmDelete()) {
             const deleteList = checkboxes.filter(c => c.checked);
             let deletingCount = deleteList.length
             deleteList.forEach(checkbox => {
