@@ -25,3 +25,11 @@ export function scrollIntoView(element) {
         });
     }
 }
+
+export function onScroll(element) {
+    return function (action) {
+        return function () {
+            element.addEventListener("scroll", _ => action());
+        }
+    }
+}
