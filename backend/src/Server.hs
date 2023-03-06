@@ -146,12 +146,12 @@ server port = withImportDb $ \importDb -> do
 
     Web.post "/:id/flood" $ Json.eitherDecode <$> Web.body >>= \case
       Right (source, pattern, types) -> Web.json =<< importRoute importDb (\id db -> withMemo id
-        $ Query.floodNodes db 100 source pattern types)
+        $ Query.floodNodes db 256 source pattern types)
       Left err -> badRequest err
 
     Web.post "/:id/filter" $ Json.eitherDecode <$> Web.body >>= \case
       Right pattern -> Web.json =<< importRoute importDb (\id db -> withMemo id
-        $ Query.filterNodes db 100 pattern)
+        $ Query.filterNodes db 256 pattern)
       Left err -> badRequest err
 
     Web.post "/:id/render" $ Json.eitherDecode <$> Web.body >>= \case

@@ -71,10 +71,17 @@ div#SearchBox {
     background-color: hsl(197, 17%, 92%);
     border-radius: 20px;
     border: 1px solid hsl(197, 23%, 40%);
-    margin: 30px 30px 0px;
+    display: flex;
+    flex-direction: column;
+    margin: 30px;
     opacity: 95%;
     overflow: hidden;
     pointer-events: auto;
+}
+
+div#SearchBox.Expanded.Fade {
+    opacity: 15%;
+    transition: opacity 1000ms ease;
 }
 
 div#SearchBar {
@@ -102,7 +109,8 @@ span#NodeCount {
 }
 
 div#SearchResults {
-    padding: 15px 0px 15px;
+    margin: 15px 0px;
+    overflow-y: auto;
 }
 
 div.ResultRow {

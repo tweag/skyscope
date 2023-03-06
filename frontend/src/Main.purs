@@ -79,6 +79,7 @@ import Web.UIEvent.KeyboardEvent as KeyboardEvent
 import Web.UIEvent.KeyboardEvent.EventTypes as EventTypes
 import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as MouseEvent
+import Web.UIEvent.MouseEvent.EventTypes (mouseenter, mouseleave, mousemove) as EventTypes
 
 main :: Effect Unit
 main = do
@@ -535,21 +536,43 @@ createSearchBox nodeConfiguration = do
                           ellipsis = if startIndex == 0 then "" else "…"
                       in setTextContent (ellipsis <> String.drop startIndex content) span
 
+  mouseOverSearchBox <- Ref.new false
+  resetSearchBoxFade <- Ref.new Nothing <#> \fadeTimerId -> do
+    traverse_ Timer.clearTimeout =<< Ref.read fadeTimerId
+    removeClass searchBox "Fade"
+    nodeConfiguration.visible >>= case _ of
+      [] -> Ref.write Nothing fadeTimerId
+      _ -> do
+        delay <- Ref.read mouseOverSearchBox <#> if _ then 3000 else 100
+        timerId <- Timer.setTimeout delay $ addClass searchBox "Fade"
+        Ref.write (Just timerId) fadeTimerId
+
+  let onElementEvent :: Element -> EventType -> (Event -> Effect Unit) -> Effect Unit
+      onElementEvent element eventType handler = do
+        let target = HTMLElement.toEventTarget
+                 <$> HTMLElement.fromElement element
+        listener <- EventTarget.eventListener handler
+        for_ target $ EventTarget.addEventListener eventType listener false
+
+  onElementEvent searchBox EventTypes.mouseenter $ const $ Ref.write true mouseOverSearchBox *> resetSearchBoxFade
+  onElementEvent searchBox EventTypes.mouseleave $ const $ Ref.write false mouseOverSearchBox *> resetSearchBoxFade
+  onElementEvent searchBox EventTypes.mousemove $ const resetSearchBoxFade
+  onElementEvent searchBox EventTypes.click $ const resetSearchBoxFade
+  onScroll searchResults $ resetSearchBoxFade
+
   let updateSearch :: Aff Unit
       updateSearch = filterNodes >>= \(resultsJson /\ pattern) ->
         case Argonaut.decodeJson resultsJson of
           Right results -> liftEffect $ renderResults results pattern
           Left err -> error $ "unexpected find results json: " <> show err
 
-      onPatternInputEvent :: EventType -> (Event -> Effect Unit) -> Effect Unit
-      onPatternInputEvent eventType handler = do
-        let target = HTMLElement.toEventTarget
-                 <$> HTMLElement.fromElement patternInput
-        listener <- EventTarget.eventListener handler
-        for_ target $ EventTarget.addEventListener eventType listener false
+      onPatternInputEvent = onElementEvent patternInput
 
-  for_ [ EventTypes.change, EventTypes.focus, EventTypes.input ]
-    (_ `onPatternInputEvent` const (runAff updateSearch))
+  for_ [ EventTypes.change, EventTypes.focus, EventTypes.input ] $
+    flip onPatternInputEvent $ const do
+      addClass searchBox "Expanded"
+      runAff updateSearch
+      resetSearchBoxFade
 
   let collapseSearch :: Effect Unit
       collapseSearch = do
@@ -559,13 +582,18 @@ createSearchBox nodeConfiguration = do
         traverse_ (HTMLInputElement.setValue "") (HTMLInputElement.fromElement patternInput)
         traverse_ HTMLElement.blur (HTMLElement.fromElement patternInput)
         Ref.write Nothing previousPattern
+        removeClass searchBox "Expanded"
 
   onKeyUp "Escape" collapseSearch
+
+  onDocumentEvent EventTypes.click $ const do
+    overSearchBox <- Ref.read mouseOverSearchBox
+    if overSearchBox then pure unit else collapseSearch
 
   let focusPatternInput :: Effect Unit
       focusPatternInput = traverse_ HTMLElement.focus
                         $ HTMLElement.fromElement patternInput
-  pure $ overlay /\ focusPatternInput
+  pure $ overlay /\ (resetSearchBoxFade *> focusPatternInput)
 
 type NodeResults =
   { resultTotalNodes :: Number
@@ -697,6 +725,8 @@ getElementById id = NonElementParentNode.getElementById id =<<
 foreign import getImportId :: Effect String
 
 foreign import scrollIntoView :: Element -> Effect Unit
+
+foreign import onScroll :: Element -> Effect Unit -> Effect Unit
 
 undefined :: forall a. a
 undefined = unsafeCoerce unit
