@@ -2,18 +2,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Sqlite
-  ( Database
-  , withDatabase
-  , withStatement
-  , Conflict(..)
-  , executeSql
-  , executeSqlScalar
-  , executeStatements
-  , batchInsert
-  , batchInsertInternal
-  , fromSQLInteger
-  , fromSQLText
-  ) where
+  ( Database,
+    withDatabase,
+    withStatement,
+    Conflict (..),
+    executeSql,
+    executeSqlScalar,
+    executeStatements,
+    batchInsert,
+    batchInsertInternal,
+    fromSQLInteger,
+    fromSQLText,
+  )
+where
 
 import Control.Exception (Exception, bracket, catchJust, throw)
 import Control.Monad (when)
@@ -22,7 +23,7 @@ import Data.Foldable (for_)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock (addUTCTime, getCurrentTime)
-import Database.SQLite3 (Database, Error(..), SQLData(..), SQLError(..), Statement, StepResult(..))
+import Database.SQLite3 (Database, Error (..), SQLData (..), SQLError (..), Statement, StepResult (..))
 import qualified Database.SQLite3 as SQLite3
 import GHC.Stack (HasCallStack)
 import Prelude
@@ -30,14 +31,14 @@ import Prelude
 withDatabase :: FilePath -> (Database -> IO a) -> IO a
 withDatabase path application =
   let open = SQLite3.open $ Text.pack path
-  in bracket open SQLite3.close application
+   in bracket open SQLite3.close application
 
 withStatement :: Database -> Text -> (Statement -> IO a) -> IO a
 withStatement database sql action =
   bracket (SQLite3.prepare database sql) SQLite3.finalize action
 
 data Conflict = Conflict [SQLError]
-  deriving Show
+  deriving (Show)
 
 instance Exception Conflict
 
@@ -62,15 +63,16 @@ executeSql :: HasCallStack => Database -> [Text] -> [SQLData] -> IO [[SQLData]]
 executeSql database sql params =
   withStatement database (Text.unlines sql) $ \statement -> do
     SQLite3.bind statement params
-    let fetch = SQLite3.stepNoCB statement >>= \case
-          Row -> (:) <$> SQLite3.columns statement <*> fetch
-          Done -> pure []
+    let fetch =
+          SQLite3.stepNoCB statement >>= \case
+            Row -> (:) <$> SQLite3.columns statement <*> fetch
+            Done -> pure []
     results <- handleConflict fetch
     pure results
 
 executeSqlScalar :: Database -> [Text] -> [SQLData] -> IO SQLData
 executeSqlScalar database sql params = do
-  [ [ result ] ] <- executeSql database sql params
+  [[result]] <- executeSql database sql params
   pure result
 
 executeStatements :: Database -> [[Text]] -> IO ()
@@ -85,25 +87,30 @@ batchInsertInternal varLimit database table columns rows = handleConflict $ do
   let rowCount = length rows
   let batchSize = varLimit `div` columnCount
   let commaSep n = Text.intercalate ", " . replicate n
-  let withInsertRows n f = flip (withStatement database) f $ Text.unlines
-        [ "INSERT INTO " <> table <> "(" <> Text.intercalate ", " columns <> ")"
-        , "VALUES " <> n `commaSep` ("(" <> columnCount `commaSep` "?"  <> ")") ]
+  let withInsertRows n f =
+        flip (withStatement database) f $
+          Text.unlines
+            [ "INSERT INTO " <> table <> "(" <> Text.intercalate ", " columns <> ")",
+              "VALUES " <> n `commaSep` ("(" <> columnCount `commaSep` "?" <> ")")
+            ]
   let split :: [a] -> ([[a]], [a])
       split xs = case splitAt batchSize xs of
         (ys, zs)
           | length ys < batchSize -> ([], ys)
           | length zs > batchSize -> first (ys :) (split zs)
-          | length zs < batchSize -> ([ ys ], zs)
-          | otherwise -> ([ ys, zs ], [])
+          | length zs < batchSize -> ([ys], zs)
+          | otherwise -> ([ys, zs], [])
       (batches, remainder) = split rows
       insert values statement = do
         SQLite3.bind statement values
         Done <- SQLite3.stepNoCB statement
         SQLite3.reset statement
-  when (length batches > 0) $ withInsertRows batchSize $ \statement ->
-    for_ batches $ \batch -> insert (concat batch) statement
-  when (length remainder > 0) $ withInsertRows (length remainder) $
-    insert $ concat remainder
+  when (length batches > 0) $
+    withInsertRows batchSize $ \statement ->
+      for_ batches $ \batch -> insert (concat batch) statement
+  when (length remainder > 0) $
+    withInsertRows (length remainder) $
+      insert $ concat remainder
 
 fromSQLInteger :: Integral a => SQLData -> Maybe a
 fromSQLInteger = \case

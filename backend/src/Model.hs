@@ -10,9 +10,10 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 
 data Node = Node
-  { nodeData :: Text
-  , nodeType :: NodeType
-  } deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
+  { nodeData :: Text,
+    nodeType :: NodeType
+  }
+  deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
 type NodeType = Text
 
@@ -26,9 +27,10 @@ data NodeState
 type NodeMap a = Map NodeHash a
 
 data Edge = Edge
-  { edgeGroup :: Int
-  , edgeSource :: NodeHash
-  , edgeTarget :: NodeHash
-  } deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
+  { edgeGroup :: Int,
+    edgeSource :: NodeHash,
+    edgeTarget :: NodeHash
+  }
+  deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
 type Graph = (NodeMap Node, Set Edge)
