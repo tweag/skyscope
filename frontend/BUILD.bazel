@@ -1,6 +1,7 @@
-exports_files( [
+exports_files([
     "src/index.js",
     "src/theme.css",
+    "spago.BUILD.bazel",
 ])
 
 genrule(
@@ -8,15 +9,19 @@ genrule(
     srcs = [
         ":packages.dhall",
         ":spago.dhall",
+        "@spago_packages//:BUILD.bazel",
     ] + glob(["src/**/*.purs"]) + glob(["src/**/*.js"]),
     outs = ["main.js"],
-    tools = ["@spago//:bin/spago"],
     cmd = """
         MAIN_JS="$$(realpath $@)"
         SPAGO="$$(realpath "$(execpath @spago//:bin/spago)")"
+        PACKAGES="$$(dirname "$$(realpath "$(execpath @spago_packages//:BUILD.bazel)")")"
         mkdir -p "$$(dirname "$$MAIN_JS")"
         cd frontend
+        tar c -C "$$PACKAGES" .spago output | tar x 1>&2
+        purs --version 1>&2
         "$$SPAGO" -c skip bundle-app -t "$$MAIN_JS"
     """,
+    tools = ["@spago//:bin/spago"],
     visibility = ["//visibility:public"],
 )

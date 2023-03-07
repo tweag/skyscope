@@ -241,6 +241,8 @@ skyframeExample =
   Text.unlines
     [ "Warning: the format of this information may change etc!",
       "",
+      "BLUE_NODE:NodeData{e247f4c}",
+      "",
       "RED_NODE:NodeData{6566162}",
       "",
       "  Group 1:",

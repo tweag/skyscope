@@ -1,4 +1,4 @@
-load("@rules_haskell//haskell:defs.bzl", "haskell_toolchain_library", "haskell_binary")
+load("@rules_haskell//haskell:defs.bzl", "haskell_binary", "haskell_toolchain_library")
 
 haskell_toolchain_library(name = "base")
 
@@ -13,6 +13,13 @@ haskell_binary(
         ":src/Render.hs",
         ":src/Server.hs",
         ":src/Sqlite.hs",
+    ],
+    compiler_flags = [
+        "-O2",
+        "-fno-omit-yields",
+        #"-Wall",  # TODO: Fix warnings
+        "-fwarn-unused-imports",
+        "-threaded",
     ],
     extra_srcs = [
         "//frontend:main.js",
@@ -49,13 +56,6 @@ haskell_binary(
         "@stackage//:wai",
         "@stackage//:warp",
         "@stackage//:zlib",
-    ],
-    compiler_flags = [
-      "-O2",
-      "-fno-omit-yields",
-      #"-Wall",  # TODO: Fix warnings
-      "-fwarn-unused-imports",
-      "-threaded",
     ],
 )
 
