@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - uses: mrkkrp/ormolu-action@v10
+    - uses: fourmolu/fourmolu-action@v6
   build:
     strategy:
       matrix:
