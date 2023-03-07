@@ -24,9 +24,9 @@
             name = "format-haskell";
             text = ''
               # shellcheck disable=SC2046
-              fourmolu --mode inplace $(find . -name '*.hs')
+              ormolu --mode inplace $(find . -name '*.hs')
             '';
-            runtimeInputs = [ pkgs.haskellPackages.fourmolu ];
+            runtimeInputs = [ pkgs.ormolu ];
           };
         };
       });
