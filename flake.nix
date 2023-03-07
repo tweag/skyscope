@@ -13,6 +13,7 @@
             esbuild
             ghcid
             graphviz
+            jq
             nodejs
             purescript
             spago
