@@ -19,6 +19,15 @@
             spago
           ];
         };
-        formatter = pkgs.nixpkgs-fmt;
+        apps.format = inputs.flake-utils.lib.mkApp {
+          drv = pkgs.writeShellApplication {
+            name = "format-haskell";
+            text = ''
+              # shellcheck disable=SC2046
+              ormolu --mode inplace $(find . -name '*.hs')
+            '';
+            runtimeInputs = [ pkgs.ormolu ];
+          };
+        };
       });
 }
