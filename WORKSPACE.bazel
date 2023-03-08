@@ -10,13 +10,12 @@ http_archive(
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:repositories.bzl", "rules_nixpkgs_dependencies")
-
 rules_nixpkgs_dependencies()
 
 http_archive(
-    name = "rules_haskell",
-    sha256 = "2a07b55c30e526c07138c717b0343a07649e27008a873f2508ffab3074f3d4f3",
     strip_prefix = "rules_haskell-0.16",
+    sha256 = "2a07b55c30e526c07138c717b0343a07649e27008a873f2508ffab3074f3d4f3",
+    name = "rules_haskell",
     url = "https://github.com/tweag/rules_haskell/archive/refs/tags/v0.16.tar.gz",
 )
 
