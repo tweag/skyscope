@@ -84,7 +84,6 @@ batchInsert = batchInsertInternal 999 -- 32766
 batchInsertInternal :: Int -> Database -> Text -> [Text] -> [[SQLData]] -> IO ()
 batchInsertInternal varLimit database table columns rows = handleConflict $ do
   let columnCount = length columns
-  let rowCount = length rows
   let batchSize = varLimit `div` columnCount
   let commaSep n = Text.intercalate ", " . replicate n
   let withInsertRows n f =
@@ -116,8 +115,10 @@ fromSQLInteger :: Integral a => SQLData -> Maybe a
 fromSQLInteger = \case
   SQLInteger value -> Just $ fromIntegral value
   SQLNull -> Nothing
+  value -> error $ "unexpected data type: " <> show value
 
 fromSQLText :: SQLData -> Maybe Text
 fromSQLText = \case
   SQLText value -> Just value
   SQLNull -> Nothing
+  value -> error $ "unexpected data type: " <> show value

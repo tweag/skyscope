@@ -22,13 +22,14 @@ import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Foldable (for_)
-import Data.Functor ((<&>))
+import Data.Functor (void, (<&>))
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (uncons)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
+import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import qualified Data.Text.IO as Text
@@ -40,45 +41,46 @@ import qualified Foreign.Marshal.Array as Marshal
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf)
 import Model
+import Sqlite (Database)
 import qualified Sqlite
 import Prelude
 
 importer :: FilePath -> IO ()
 importer path = do
   putStrLn $ "importing graph: " <> path
-  Sqlite.withDatabase path $ \db -> do
-    optimiseDatabaseAccess db
-    importGraph db
+  Sqlite.withDatabase path $ \database -> do
+    optimiseDatabaseAccess database
+    importGraph database
   putStrLn $ "indexing"
-  Sqlite.withDatabase path $ \db -> do
-    optimiseDatabaseAccess db
-    indexing <- indexPathsAsync db
+  Sqlite.withDatabase path $ \database -> do
+    optimiseDatabaseAccess database
+    indexing <- indexPathsAsync database
     atomically $
       readTVar indexing >>= \case
         False -> pure ()
         True -> retry
 
-optimiseDatabaseAccess :: Sqlite.Database -> IO ()
-optimiseDatabaseAccess db =
+optimiseDatabaseAccess :: Database -> IO ()
+optimiseDatabaseAccess database =
   Sqlite.executeStatements
-    db
+    database
     [ ["pragma mmap_size = 10737418240;"],
       ["pragma journal_mode = WAL;"],
       ["pragma synchronous = off;"]
     ]
 
-indexPathsAsync :: Sqlite.Database -> IO (TVar Bool)
-indexPathsAsync db = do
+indexPathsAsync :: Database -> IO (TVar Bool)
+indexPathsAsync database = do
   progress <- newTVarIO (0, 1)
   indexStartTime <- Clock.getCurrentTime
-  forkIO $ indexPaths db progress
+  void $ forkIO $ indexPaths database progress
   indexing <- newTVarIO True
   let showProgress = do
         threadDelay 100_000
         (done, total) <- readTVarIO progress
         timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
         let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
-            expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime
+            expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime :: Integer
             ansi = if done < total then "37" else "32"
         putStrLn $
           "\x1b[1F\x1b[2K\x1b[" <> ansi <> "mindexed paths to "
@@ -93,12 +95,12 @@ indexPathsAsync db = do
           else do
             putStrLn $ "  time taken = " <> show timeTaken <> " seconds"
             atomically $ writeTVar indexing False
-  forkIO showProgress
+  void $ forkIO showProgress
   pure indexing
 
-importGraph :: Sqlite.Database -> IO ()
-importGraph db = timed "importGraph" $ do
-  createSchema db
+importGraph :: Database -> IO ()
+importGraph database = timed "importGraph" $ do
+  createSchema database
   legacy <- getSkyscopeEnv "LEGACY_BAZEL"
   let parser =
         if isJust legacy
@@ -116,15 +118,16 @@ importGraph db = timed "importGraph" $ do
           (sourceIndex, _) <- Map.lookup source indexedNodes
           (targetIndex, _) <- Map.lookup target indexedNodes
           pure (group, sourceIndex, targetIndex)
-  Sqlite.batchInsert db "node" ["idx", "hash", "data", "type"] $
+  Sqlite.batchInsert database "node" ["idx", "hash", "data", "type"] $
     Map.assocs indexedNodes <&> \(nodeHash, (nodeIdx, Node nodeData nodeType)) ->
       SQLInteger nodeIdx : (SQLText <$> [nodeHash, nodeType <> ":" <> nodeData, nodeType])
-  Sqlite.batchInsert db "edge" ["group_num", "source", "target"] $
+  Sqlite.batchInsert database "edge" ["group_num", "source", "target"] $
     indexedEdges <&> \(g, s, t) -> SQLInteger <$> [fromIntegral g, s, t]
   where
-    createSchema db =
+    createSchema :: Database -> IO ()
+    createSchema database =
       Sqlite.executeStatements
-        db
+        database
         [ [ "CREATE TABLE node (",
             "  idx INTEGER,",
             "  hash TEXT,",
@@ -166,7 +169,7 @@ checkParserEquivalence = do
 keyParser :: Parser (NodeHash, Node)
 keyParser = do
   nodeType <- Parser.takeWhile1 $ \c -> c /= ':' && c /= '\n'
-  Parser.char ':'
+  void $ Parser.char ':'
   nodeData <- Parser.takeTill $ \c -> c == '|' || c == '\n'
   let nodeHash =
         Text.decodeUtf8 $
@@ -177,8 +180,8 @@ keyParser = do
 
 skippingWarning :: Parser a -> Parser a
 skippingWarning parser = do
-  Parser.option "" $ Parser.string "Warning:"
-  Parser.manyTill Parser.anyChar $ Parser.string "\n\n"
+  void $ Parser.option "" $ Parser.string "Warning:"
+  void $ Parser.manyTill Parser.anyChar $ Parser.string "\n\n"
   parser
 
 graphParserLegacy :: Parser Graph
@@ -196,6 +199,7 @@ graphParserLegacy = skippingWarning $ do
           Set.fromList $ Edge 0 sourceHash . fst <$> targets
         )
 
+skyframeExampleLegacy :: Text
 skyframeExampleLegacy =
   Text.unlines
     [ "Warning: the format of this information may change etc!",
@@ -228,15 +232,16 @@ graphParser = skippingWarning $ do
     groupParser :: Parser (Int, [(NodeHash, Node)])
     groupParser = do
       Parser.skipSpace
-      Parser.string "Group "
+      void $ Parser.string "Group "
       groupNum <- Parser.decimal
-      Parser.char ':'
+      void $ Parser.char ':'
       fmap (groupNum,) $
         Parser.many1 $ do
           Parser.endOfLine
-          Parser.string "    "
+          void $ Parser.string "    "
           keyParser <* Parser.endOfLine
 
+skyframeExample :: Text
 skyframeExample =
   Text.unlines
     [ "Warning: the format of this information may change etc!",
@@ -268,10 +273,10 @@ skyframeExample =
       ""
     ]
 
-indexPaths :: Sqlite.Database -> TVar (Int, Int) -> IO ()
-indexPaths db progress = do
-  Sqlite.executeSql db ["DELETE FROM path;"] []
-  nodeCount <- Sqlite.executeSqlScalar db ["SELECT COUNT(idx) FROM node;"] [] <&> fromSQLInt
+indexPaths :: Database -> TVar (Int, Int) -> IO ()
+indexPaths database progress = do
+  void $ Sqlite.executeSql database ["DELETE FROM path;"] []
+  nodeCount <- Sqlite.executeSqlScalar database ["SELECT COUNT(idx) FROM node;"] [] <&> fromSQLInt
   atomically $ writeTVar progress (0, nodeCount)
   predMap <- makePredMap nodeCount
   let predMapSize = length predMap
@@ -290,10 +295,11 @@ indexPaths db progress = do
               stepMapSize <- Import.c_indexPaths predMapPtr destination (fromIntegral nodeCount) stepMapPtr
               let stepMapSizeBytes = fromIntegral stepMapSize * sizeOf (0 :: CLong)
               stepMapBytes <- Marshal.peekArray stepMapSizeBytes $ castPtr stepMapPtr
-              Sqlite.executeSql
-                db
-                ["INSERT INTO path (destination, steps) VALUES (?, ?);"]
-                [SQLInteger $ fromIntegral destination, SQLBlob $ BS.pack stepMapBytes]
+              void $
+                Sqlite.executeSql
+                  database
+                  ["INSERT INTO path (destination, steps) VALUES (?, ?);"]
+                  [SQLInteger $ fromIntegral destination, SQLBlob $ BS.pack stepMapBytes]
               atomically $ modifyTVar progress $ first (+ 1)
               worker stepMapPtr
             Nothing -> pure ()
@@ -307,7 +313,7 @@ indexPaths db progress = do
     makePredMap :: Int -> IO [Int]
     makePredMap nodeCount = do
       predecessors <-
-        Sqlite.executeSql db ["SELECT target, source FROM edge ORDER BY target;"] []
+        Sqlite.executeSql database ["SELECT target, source FROM edge ORDER BY target;"] []
           <&> ((map $ \[t, s] -> (fromSQLInt t, [fromSQLInt s])) >>> IntMap.fromAscListWith (++))
       pure $ uncurry (++) $ evalRWS (for [0 .. nodeCount] serialisePreds) predecessors 0
 
@@ -323,6 +329,7 @@ indexPaths db progress = do
 
     fromSQLInt :: Num a => SQLData -> a
     fromSQLInt (SQLInteger n) = fromIntegral n
+    fromSQLInt value = error $ "expected data type" <> show value
 
 foreign import ccall safe "path.cpp"
   c_indexPaths ::
