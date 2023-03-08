@@ -6,35 +6,25 @@ import Affjax.Web as Affjax
 import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Argonaut.Core (Json)
-import Data.Argonaut.Core as Argonaut
-import Data.Argonaut.Decode as Argonaut
-import Data.Array ((!!))
+import Data.Argonaut.Core (fromArray, fromObject, fromString, toArray, toString) as Argonaut
+import Data.Argonaut.Decode (decodeJson) as Argonaut
 import Data.Array as Array
 import Data.Array.NonEmpty as Array.NonEmpty
-import Data.Bifunctor (lmap)
-import Data.Char as Char
 import Data.Either (Either(..), fromRight)
-import Data.Either as Either
 import Data.Foldable (any, foldMap, foldl, for_, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
-import Data.Function ((>>>))
-import Data.Functor ((<#>))
-import Data.HTTP.Method as HTTP.Method
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Number as Number
 import Data.Show as Show
 import Data.String (replaceAll, split, toLower, toUpper)
 import Data.String.CodeUnits as String
 import Data.String.Pattern (Pattern(..), Replacement(..))
-import Data.String.Regex as Regex
-import Data.String.Regex.Flags as Regex
-import Data.String.Regex.Unsafe as Regex
-import Data.Symbol (class IsSymbol)
-import Data.Time.Duration (Milliseconds(..))
-import Data.Traversable (for, sequence, traverse)
-import Data.Tuple (Tuple(..), uncurry)
+import Data.String.Regex (match, replace, split) as Regex
+import Data.String.Regex.Flags (global, ignoreCase, noFlags) as Regex
+import Data.String.Regex.Unsafe (unsafeRegex) as Regex
+import Data.Traversable (sequence, traverse)
+import Data.Tuple (Tuple(..))
 import Data.Tuple.Nested ((/\), type (/\))
-import Debug (trace)
 import Effect (Effect)
 import Effect.AVar as Effect.AVar
 import Effect.Aff (Aff)
@@ -44,39 +34,31 @@ import Effect.Class (liftEffect)
 import Effect.Console as Console
 import Effect.Exception (Error)
 import Effect.Exception as Exception
-import Effect.Ref (Ref)
 import Effect.Ref as Ref
 import Effect.Timer as Timer
 import Foreign.Object (Object)
 import Foreign.Object as Object
 import Prelude
-import Record as Record
-import Signal (Signal)
 import Signal (runSignal) as Signal
 import Signal.Channel (channel, send, subscribe) as Signal
-import Signal.Effect as Signal
-import Type.Proxy (Proxy(..))
 import Unsafe.Coerce (unsafeCoerce)
 import Web.DOM.DOMTokenList as DOMTokenList
 import Web.DOM.Document as Document
 import Web.DOM.Element (Element)
 import Web.DOM.Element as Element
 import Web.DOM.HTMLCollection as HTMLCollection
-import Web.DOM.Node (Node)
 import Web.DOM.Node as Node
 import Web.DOM.NonElementParentNode as NonElementParentNode
-import Web.Event.Event (Event, EventType, type_)
-import Web.Event.EventTarget (EventListener)
+import Web.Event.Event (Event, EventType)
 import Web.Event.EventTarget as EventTarget
 import Web.HTML as HTML
-import Web.HTML.Event.EventTypes as EventTypes
+import Web.HTML.Event.EventTypes (change, click, focus, input, load) as EventTypes
 import Web.HTML.HTMLDocument as HTMLDocument
-import Web.HTML.HTMLElement (HTMLElement)
 import Web.HTML.HTMLElement as HTMLElement
 import Web.HTML.HTMLInputElement as HTMLInputElement
 import Web.HTML.Window as Window
 import Web.UIEvent.KeyboardEvent as KeyboardEvent
-import Web.UIEvent.KeyboardEvent.EventTypes as EventTypes
+import Web.UIEvent.KeyboardEvent.EventTypes (keydown, keyup) as EventTypes
 import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as MouseEvent
 import Web.UIEvent.MouseEvent.EventTypes (mouseenter, mouseleave, mousemove) as EventTypes
@@ -148,19 +130,19 @@ type ClickHandler a = Click -> MouseEvent -> Effect a
 
 makeTools :: Element -> NodeConfiguration -> Effect (ClickHandler Boolean)
 makeTools graph nodeConfiguration = do
-  handlers <- sequence
+  clickHandlers <- sequence
     [ makeOpenAllPaths
     , makeOpenPath
     , makeCrop
     ]
   pure \element event ->
     let tryTools handlers = case Array.uncons handlers of
-          Just { head: handler, tail: handlers} -> do
+          Just { head: handler, tail: handlers'} -> do
              handled <- handler element event
              if handled then pure true
-               else tryTools handlers
+               else tryTools handlers'
           Nothing -> pure false
-     in tryTools handlers
+     in tryTools clickHandlers
 
   where
     makeOpenAllPaths :: Effect (ClickHandler Boolean)
@@ -174,13 +156,13 @@ makeTools graph nodeConfiguration = do
           traversePaths f = pathElements >>= traverse f
       onKeyDown "Shift" $ Ref.write true active <* updateDOM
       onKeyUp "Shift" $ Ref.write false active <* updateDOM
-      pure \click event -> Ref.read active >>= not >>>
+      pure \click _ -> Ref.read active >>= not >>>
         if _ then pure false else case click of
           PathClick _ -> openAllPaths $> true
           _ -> pure false
 
     makeOpenPath :: Effect (ClickHandler Boolean)
-    makeOpenPath = pure \click event -> case click of
+    makeOpenPath = pure \click _ -> case click of
       PathClick edge -> openPath edge $> true
       _ -> pure false
 
@@ -202,45 +184,42 @@ makeTools graph nodeConfiguration = do
 
     makeCrop :: Effect (ClickHandler Boolean)
     makeCrop = do
-      active <- Ref.new false
-      selection <- Ref.new Object.empty
+      activeRef <- Ref.new false
+      selectionRef <- Ref.new Object.empty
       let updateDOM = nodeElements >>= traverse_ \node -> do
             hash <- Element.id node
-            active <- Ref.read active
-            selection <- Ref.read selection
+            active <- Ref.read activeRef
+            selection <- Ref.read selectionRef
             for_ [ "Selected", "Unselected" ] (removeClass node)
             when active $ case Object.lookup hash selection of
               Just _ -> addClass node "Selected"
               Nothing -> addClass node "Unselected"
       onKeyDown "Shift" do
-        Ref.write true active
-        Ref.write Object.empty selection
+        Ref.write true activeRef
+        Ref.write Object.empty selectionRef
         updateDOM
       onKeyUp "Shift" do
-        Ref.write false active
+        Ref.write false activeRef
         updateDOM
-        selection <- Ref.read selection
+        selection <- Ref.read selectionRef
         when (not $ Object.isEmpty selection) $
           nodeConfiguration.visible >>= traverse_
             \hash -> if hash `Object.member` selection
               then pure unit else nodeConfiguration.hide hash
-      pure \click event -> Ref.read active >>= not >>> if _ then pure false else
+      pure \click _ -> Ref.read activeRef >>= not >>> if _ then pure false else
         case click of
           NodeClick node -> do
             hash <- Element.id node
             let toggle = case _ of
                   Just _ -> Nothing
                   Nothing -> Just Collapsed
-            Ref.modify_ (Object.alter toggle hash) selection
+            Ref.modify_ (Object.alter toggle hash) selectionRef
             updateDOM
             pure true
           _ -> pure false
 
     nodeElements :: Effect (Array Element)
     nodeElements = getElementsByClassName "node" graph
-
-    edgeElements :: Effect (Array Element)
-    edgeElements = getElementsByClassName "edge" graph
 
     pathElements :: Effect (Array Element)
     pathElements = getElementsByClassName "Path" graph
@@ -256,7 +235,7 @@ orderOutsideIn a = if Array.length a `mod` 2 == 0
 
 attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler Boolean -> Effect Unit
 attachGraphRenderer graph nodeConfiguration onClick = do
-  render <- makeRenderer nodeConfiguration
+  render <- makeRenderer
   nodeConfiguration.onChange \changedNodeHash ->
     runAff $ render >>= \svg -> liftEffect do
       decorateGraph svg \click event -> do
@@ -281,8 +260,8 @@ attachGraphRenderer graph nodeConfiguration onClick = do
               scrollIntoView element
 
   where
-    makeRenderer :: NodeConfiguration -> Effect (Aff Element)
-    makeRenderer nodeConfiguration = makeThrottledAction do
+    makeRenderer :: Effect (Aff Element)
+    makeRenderer = makeThrottledAction do
       url <- liftEffect $ getImportId <#> (_ <> "/render")
       result <- Affjax.post Affjax.ResponseFormat.document url
         <<< Just <<< Affjax.RequestBody.json =<< liftEffect nodeConfiguration.json
@@ -290,15 +269,13 @@ attachGraphRenderer graph nodeConfiguration onClick = do
         Left err -> error $ Affjax.printError err
         Right response -> do
           svg <- HTMLCollection.item 0 =<< Document.getElementsByTagName "svg" response.body
-          case svg of
-            Nothing -> error "svg element not found"
-            Just svg -> pure svg
+          maybe (error "svg element not found") pure svg
 
     decorateGraph :: Element -> ClickHandler Unit -> Effect Unit
-    decorateGraph svg onClick = do
+    decorateGraph svg handleClick = do
       getElementsByClassName "node" svg >>= traverse_ \node -> do
         listener <- EventTarget.eventListener \event ->
-          for_ (MouseEvent.fromEvent event) (onClick $ NodeClick node)
+          for_ (MouseEvent.fromEvent event) (handleClick $ NodeClick node)
         EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget node
         hash <- Element.id node
         deconstructNodeElement node >>= case _ of
@@ -320,7 +297,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
       getElementsByClassName "edge" svg >>= traverse_ \edge -> do
         containsClass edge "Path" >>= not >>> if _ then pure unit else do
           listener <- EventTarget.eventListener \event ->
-            for_ (MouseEvent.fromEvent event) (onClick $ PathClick edge)
+            for_ (MouseEvent.fromEvent event) (handleClick $ PathClick edge)
           EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget edge
         animateFadeIn edge
     
@@ -471,7 +448,7 @@ createSearchBox nodeConfiguration = do
         Left err -> error $ Affjax.printError err
         Right response -> pure $ response.body /\ pattern
 
-  nodeCountMax <- Ref.new 0.0
+  nodeCountMaxRef <- Ref.new 0.0
   nodeCount <- createElement "span" "NodeCount" $ Just searchBar
   let updateNodeCount :: String -> Number -> Effect Unit
       updateNodeCount label total = setTextContent (label <> " " <>
@@ -481,7 +458,7 @@ createSearchBox nodeConfiguration = do
   let renderResults :: NodeResults -> String -> Effect Unit
       renderResults results pattern = do
         let total = results.resultTotalNodes
-        nodeCountMax <- Ref.modify (max total) nodeCountMax
+        void $ Ref.modify (max total) nodeCountMaxRef
         updateNodeCount "found" total
         removeAllChildren searchResults
         sequence_ $ Object.toArrayWithKey (renderResultRow pattern) results.resultNodes
@@ -577,7 +554,7 @@ createSearchBox nodeConfiguration = do
   let collapseSearch :: Effect Unit
       collapseSearch = do
         removeAllChildren searchResults
-        updateNodeCount "" =<< Ref.read nodeCountMax
+        updateNodeCount "" =<< Ref.read nodeCountMaxRef
         Node.setNodeValue "" $ Element.toNode patternInput
         traverse_ (HTMLInputElement.setValue "") (HTMLInputElement.fromElement patternInput)
         traverse_ HTMLElement.blur (HTMLElement.fromElement patternInput)
@@ -608,8 +585,8 @@ onKeyDown = onKeyEvent EventTypes.keydown
 
 onKeyEvent :: EventType -> String -> Effect Unit -> Effect Unit
 onKeyEvent eventType key action = onDocumentEvent eventType \event ->
-  for_ (KeyboardEvent.fromEvent event) \event ->
-    if KeyboardEvent.key event == key
+  for_ (KeyboardEvent.fromEvent event) \keyboardEvent ->
+    if KeyboardEvent.key keyboardEvent == key
       then action else pure unit
 
 onDocumentEvent :: EventType -> (Event -> Effect Unit) -> Effect Unit
@@ -624,14 +601,12 @@ formatNodeType nodeType
   $ foldMap camel
   $ Regex.split regex nodeType
   where
-    regex = Regex.unsafeRegex "[_]+" Regex.noFlags
+    removeUnshareable s = fromMaybe s $ String.stripSuffix (Pattern " (unshareable)") s
     camel = String.uncons >>> case _ of
       Just word -> toUpper (String.singleton word.head) <> toLower word.tail
       Nothing -> ""
-    removeUnshareable s = case String.stripSuffix (Pattern " (unshareable)") s of
-      Just s -> s
-      Nothing -> s
-   
+    regex = Regex.unsafeRegex "[_]+" Regex.noFlags
+
 makeThrottledAction :: forall a. Aff a -> Effect (Aff a)
 makeThrottledAction action = do
   mutex <- Effect.AVar.new unit
