@@ -13,14 +13,23 @@ genrule(
     ] + glob(["src/**/*.purs"]) + glob(["src/**/*.js"]),
     outs = ["main.js"],
     cmd = """
+        # Resolve labels to absolute paths.
         MAIN_JS="$$(realpath $@)"
         SPAGO="$$(realpath "$(execpath @spago//:bin/spago)")"
         PACKAGES="$$(dirname "$$(realpath "$(execpath @spago_packages//:BUILD.bazel)")")"
         mkdir -p "$$(dirname "$$MAIN_JS")"
+
+        # Run spago to build and bundle frontend.
         cd frontend
         tar c -C "$$PACKAGES" .spago output | tar x 1>&2
-        purs --version 1>&2
-        "$$SPAGO" -c skip bundle-app -t "$$MAIN_JS"
+        RESULT="$$("$$SPAGO" -c skip bundle-app -t "$$MAIN_JS" -u --json-errors)" || true
+
+        # Fail if there were any warnings or errors.
+        count() { jq ".$$1 | length" <<<"$$RESULT"; }
+        if [[ "$$(count warnings)" -ne 0 || "$$(count errors)" -ne 0 ]]; then
+            jq . <<<"$$RESULT" 1>&2
+            exit 1
+        fi
     """,
     tools = ["@spago//:bin/spago"],
     visibility = ["//visibility:public"],
