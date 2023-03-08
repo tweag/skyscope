@@ -7,8 +7,8 @@ exports_files([
 genrule(
     name = "bundle",
     srcs = [
-        ":packages.dhall",
         ":spago.dhall",
+        ":packages.dhall",
         "@spago_packages//:BUILD.bazel",
     ] + glob(["src/**/*.purs"]) + glob(["src/**/*.js"]),
     outs = ["main.js"],

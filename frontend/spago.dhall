@@ -5,6 +5,7 @@
   , "affjax-web"
   , "argonaut-codecs"
   , "argonaut-core"
+  , "argonaut-generic"
   , "arrays"
   , "avar"
   , "console"

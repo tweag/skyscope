@@ -8,11 +8,17 @@ import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Core (fromArray, fromObject, fromString, toArray, toString) as Argonaut
 import Data.Argonaut.Decode (decodeJson) as Argonaut
+import Data.Argonaut.Decode.Class (class DecodeJson)
+import Data.Argonaut.Decode.Generic (genericDecodeJson)
+import Data.Argonaut.Encode (encodeJson) as Argonaut
+import Data.Argonaut.Encode.Class (class EncodeJson)
+import Data.Argonaut.Encode.Generic (genericEncodeJson)
 import Data.Array as Array
 import Data.Array.NonEmpty as Array.NonEmpty
 import Data.Either (Either(..), fromRight)
 import Data.Foldable (any, foldMap, foldl, for_, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
+import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Number as Number
 import Data.Show as Show
@@ -87,15 +93,23 @@ type NodeHash = String
 
 data NodeState = Collapsed | Expanded
 
+derive instance genericNodeState :: Generic NodeState _
+
+instance decodeJsonNodeState :: DecodeJson NodeState where
+  decodeJson = genericDecodeJson
+
+instance encodeJsonNodeState :: EncodeJson NodeState where
+  encodeJson = genericEncodeJson
+
 instance Show NodeState where
   show Collapsed = "Collapsed"
   show Expanded = "Expanded"
 
 type NodeConfiguration =
   { onChange :: (Maybe NodeHash -> Effect Unit) -> Effect Unit
-  , get :: NodeHash -> Effect (Maybe NodeState)
   , show :: NodeHash -> NodeState -> Effect Unit
   , hide :: NodeHash -> Effect Unit
+  , get :: NodeHash -> Effect (Maybe NodeState)
   , visible :: Effect (Array NodeHash)
   , json :: Effect Json
   }
@@ -106,13 +120,20 @@ makeNodeConfiguration = do
   channel <- Signal.channel Nothing
   let notify = Signal.send channel
       onChange action = Signal.runSignal $ action <$> Signal.subscribe channel
+      show hash state = modify true (Just hash) (Object.insert hash state)
+      hide hash = modify true Nothing (Object.delete hash)
       get hash = Object.lookup hash <$> Ref.read nodeStates
-      show hash state = Ref.modify_ (Object.insert hash state) nodeStates *> notify (Just hash)
-      hide hash = Ref.modify_ (Object.delete hash) nodeStates *> notify Nothing
       visible = Object.keys <$> Ref.read nodeStates
       json = Argonaut.fromObject <<< map jsonState <$> Ref.read nodeStates
       jsonState = Argonaut.fromString <<< Show.show
-  pure { onChange, get, show, hide, visible, json }
+      modify push changedNodeHash f = do
+        Ref.modify_ f nodeStates
+        when push $ pushHistory <<< Argonaut.encodeJson =<< Ref.read nodeStates
+        notify changedNodeHash
+  onPopHistory $ Argonaut.decodeJson >>> case _ of
+    Left err -> error $ "failed to decode history: " <> Show.show err
+    Right state -> modify false Nothing (const state)
+  pure { onChange, show, hide, get, visible, json }
 
 defaultState :: Object NodeState
 defaultState = Object.fromFoldable
@@ -702,6 +723,10 @@ foreign import getImportId :: Effect String
 foreign import scrollIntoView :: Element -> Effect Unit
 
 foreign import onScroll :: Element -> Effect Unit -> Effect Unit
+
+foreign import pushHistory :: Json -> Effect Unit
+
+foreign import onPopHistory :: (Json -> Effect Unit) -> Effect Unit
 
 undefined :: forall a. a
 undefined = unsafeCoerce unit
