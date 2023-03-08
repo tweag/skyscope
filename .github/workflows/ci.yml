@@ -15,6 +15,12 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: mrkkrp/ormolu-action@v3
+  buildifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: thompsonja/bazel-buildifier@v0.4.0
+        with:
+          warnings: all
   build:
     strategy:
       matrix:
