@@ -18,9 +18,10 @@ jobs:
   buildifier:
     runs-on: ubuntu-latest
     steps:
-      - uses: thompsonja/bazel-buildifier@v0.4.0
-        with:
-          warnings: all
+    - uses: actions/checkout@v3
+    - uses: cachix/install-nix-action@v19
+    - name: Buildifier check
+      run: nix develop --command bazel test //:buildifier_test --verbose_failures
   build:
     strategy:
       matrix:
