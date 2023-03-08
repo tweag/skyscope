@@ -1,7 +1,9 @@
+// getImportId :: Effect String
 export function getImportId() {
     return importId;
 }
 
+// scrollIntoView :: Element -> Effect Unit
 export function scrollIntoView(element) {
     return function () {
         const documentElement = document.documentElement;
@@ -26,10 +28,27 @@ export function scrollIntoView(element) {
     }
 }
 
+// onScroll :: Element -> Effect Unit -> Effect Unit
 export function onScroll(element) {
     return function (action) {
         return function () {
             element.addEventListener("scroll", _ => action());
         }
+    }
+}
+
+// pushHistory :: Json -> Effect Unit
+export function pushHistory(state) {
+    return function () {
+        window.history.pushState(state, "");
+    }
+}
+
+// onPopHistory :: (Json -> Effect Unit) -> Effect Unit
+export function onPopHistory(action) {
+    return function () {
+        window.addEventListener("popstate", event => {
+            action(event.state)();
+        });
     }
 }
