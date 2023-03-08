@@ -16,9 +16,11 @@ haskell_binary(
     ],
     compiler_flags = [
         "-O2",
+        "-Wall",
+        "-Werror",
+        "-Wno-name-shadowing",
         "-fno-omit-yields",
-        #"-Wall",  # TODO: Fix warnings
-        "-fwarn-unused-imports",
+        "-fobject-code",
         "-threaded",
     ],
     extra_srcs = [

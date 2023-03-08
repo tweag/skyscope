@@ -34,6 +34,7 @@ import Data.Traversable (for)
 import Database.SQLite3 (SQLData (..))
 import Model
 import Query (HasFindPathMemo, findPath)
+import Sqlite (Database)
 import qualified Sqlite
 import System.Exit (ExitCode (..))
 import System.Process.Text (readProcessWithExitCode)
@@ -48,16 +49,16 @@ data RenderResult = RenderResult
 
 renderGraph ::
   (HasUnifyComponentsMemo r, HasFindPathMemo r) =>
-  Sqlite.Database ->
+  Database ->
   NodeMap NodeState ->
   Memoize r RenderResult
-renderGraph db nodeStates = do
+renderGraph database nodeStates = do
   -- TODO: memoize rendered svgs
 
   let selectEdges :: NodeHash -> Text -> IO [[SQLData]]
       selectEdges nodeHash whereClause =
         Sqlite.executeSql
-          db
+          database
           [ "SELECT group_num, s.hash, t.hash FROM edge",
             "INNER JOIN node AS s ON s.idx = edge.source",
             "INNER JOIN node AS t ON t.idx = edge.target",
@@ -90,12 +91,12 @@ renderGraph db nodeStates = do
   nodeMap <- for nodeIdentityMap $ \nodeHash ->
     liftIO $
       Sqlite.executeSql
-        db
+        database
         ["SELECT type, data FROM node WHERE hash = ?;"]
         [SQLText nodeHash]
         <&> \[[SQLText nodeType, SQLText nodeData]] -> Node nodeType nodeData
 
-  links <- findPathLinks db nodeStates edges
+  links <- findPathLinks database nodeStates edges
 
   let graph =
         Text.unlines
@@ -181,16 +182,16 @@ data PathLink = PathLink
 
 findPathLinks ::
   (HasUnifyComponentsMemo r, HasFindPathMemo r) =>
-  Sqlite.Database ->
+  Database ->
   NodeMap NodeState ->
   [Edge] ->
   Memoize r [PathLink]
-findPathLinks db nodeStates edges =
+findPathLinks database nodeStates edges =
   timed "findPathLinks" $
     nub <$> do
       let components = findComponents edges nodeStates
           pairs = concat [[(c1, c2), (c2, c1)] | c1 : cs <- tails components, c2 <- cs]
-      fmap catMaybes $ for pairs $ uncurry $ unifyComponents db nodeStates
+      fmap catMaybes $ for pairs $ uncurry $ unifyComponents database nodeStates
 
 type Component = NodeMap NodeState
 
@@ -246,15 +247,15 @@ getUnifyComponentsMemo = hLookupByLabel (Label :: Label "unifyComponents")
 
 unifyComponents ::
   (HasUnifyComponentsMemo r, HasFindPathMemo r) =>
-  Sqlite.Database ->
+  Database ->
   NodeMap NodeState ->
   Component ->
   Component ->
   Memoize r (Maybe PathLink)
-unifyComponents db nodeStates = curry $
+unifyComponents database nodeStates = curry $
   memoize "unifyComponents" getUnifyComponentsMemo $ \(c1, c2) -> do
     let unify (origin, destination) =
-          findPath db origin destination <&> \path ->
+          findPath database origin destination <&> \path ->
             let pathState = (id &&& flip Map.lookup nodeStates) <$> path
                 hiddenCount = length $ filter (isNothing . snd) pathState
                 shortenPath path = nonEmpty =<< dropExpanded <$> nonEmpty path
@@ -277,7 +278,7 @@ printComponents :: [Component] -> IO ()
 printComponents components = do
   putStrLn "findComponents:\n"
   for_ ([0 ..] `zip` components) $ \(i, nodes) -> do
-    putStrLn $ "  \x1b[1;" <> show (31 + i `mod` 7) <> "mCOMPONENT:"
+    putStrLn $ "  \x1b[1;" <> show (31 + i `mod` 7 :: Integer) <> "mCOMPONENT:"
     for_ (Map.assocs nodes) $ \(nodeHash, nodeState) ->
       putStrLn $ "    " <> Text.unpack nodeHash <> " " <> show nodeState
     putStrLn "\x1b[0m"

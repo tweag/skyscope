@@ -29,6 +29,7 @@ import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf)
 import GHC.Generics (Generic)
 import Model
+import Sqlite (Database)
 import qualified Sqlite
 import Prelude
 
@@ -49,20 +50,18 @@ getFindPathMemo = hLookupByLabel (Label :: Label "findPath")
 
 findPath ::
   HasFindPathMemo r =>
-  Sqlite.Database ->
+  Database ->
   NodeHash ->
   NodeHash ->
   Memoize r [NodeHash]
-findPath db = curry $
+findPath database = curry $
   memoize "findPath" getFindPathMemo $ \(origin, destination) -> liftIO $ do
     destination <- getNodeIdx destination
     origin <- getNodeIdx origin
     steps <-
       Sqlite.executeSql
-        db
-        [ "SELECT steps FROM path",
-          "WHERE destination = ?;"
-        ]
+        database
+        ["SELECT steps FROM path WHERE destination = ?;"]
         [SQLInteger destination]
     case steps of
       [] -> error $ "no path data for " <> show destination
@@ -91,17 +90,21 @@ findPath db = curry $
                   path <- Marshal.peekArray actualLength pathPtr
                   for (fromIntegral <$> path) $ \nodeIdx ->
                     Sqlite.executeSql
-                      db
+                      database
                       ["SELECT hash FROM node WHERE idx = ?;"]
                       [SQLInteger nodeIdx]
                       <&> \case
                         [] -> error $ "failed to find hash for path node " <> show nodeIdx
                         [[SQLText nodeHash]] -> nodeHash
+                        _ : _ : _ -> error "should be impossible due to primary key constraint on idx column"
+                        [_] -> error "hash column has unexpected data type"
+      [_] -> error "steps column has unexpected data type"
+      _ : _ : _ -> error "should be impossible due to primary key constraint on destination column"
   where
     getNodeIdx :: Text -> IO Int64
     getNodeIdx hash =
       Sqlite.executeSqlScalar
-        db
+        database
         ["SELECT idx FROM node WHERE hash = ?;"]
         [SQLText hash]
         <&> \(SQLInteger n) -> n
@@ -125,13 +128,13 @@ getFloodNodesMemo = hLookupByLabel (Label :: Label "floodNodes")
 
 floodNodes ::
   HasFloodNodesMemo r =>
-  Sqlite.Database ->
+  Database ->
   Int ->
   NodeHash ->
   Pattern ->
   Set NodeType ->
   Memoize r QueryResult
-floodNodes db limit source pattern types = error "not implemented"
+floodNodes _database _limit _source _pattern _types = error "not implemented"
 
 type FilterNodesMemo = TVar (Map Pattern QueryResult)
 
@@ -142,26 +145,22 @@ getFilterNodesMemo = hLookupByLabel (Label :: Label "filterNodes")
 
 filterNodes ::
   HasFilterNodesMemo r =>
-  Sqlite.Database ->
+  Database ->
   Int64 ->
   Pattern ->
   Memoize r QueryResult
-filterNodes db limit = memoize "filterNodes" getFilterNodesMemo $ \pattern -> do
+filterNodes database limit = memoize "filterNodes" getFilterNodesMemo $ \pattern -> do
   SQLInteger total <-
     liftIO $
       Sqlite.executeSqlScalar
-        db
-        [ "SELECT COUNT(hash) FROM node",
-          "WHERE data LIKE ?"
-        ]
+        database
+        ["SELECT COUNT(hash) FROM node WHERE data LIKE ?"]
         [SQLText pattern]
   records <-
     liftIO $
       Sqlite.executeSql
-        db
-        [ "SELECT hash, data, type FROM node",
-          "WHERE data LIKE ? LIMIT ?;"
-        ]
+        database
+        ["SELECT hash, data, type FROM node WHERE data LIKE ? LIMIT ?;"]
         [SQLText pattern, SQLInteger limit]
   pure . QueryResult (fromIntegral total) $
     Map.fromList $

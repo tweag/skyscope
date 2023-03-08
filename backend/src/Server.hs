@@ -24,7 +24,7 @@ import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.ByteUnits (ByteUnit (..), ByteValue (..), getAppropriateUnits, getShortHand)
 import Data.Either (fromRight)
 import Data.FileEmbed (embedFile, embedFileIfExists)
-import Data.Functor ((<&>))
+import Data.Functor (void, (<&>))
 import Data.HList (Label (..))
 import Data.HList.Record (emptyRecord, (.*.), (.=.))
 import qualified Data.Map as Map
@@ -48,6 +48,7 @@ import qualified Network.Wai as Web
 import qualified Network.Wai.Handler.Warp as Web
 import qualified Query
 import qualified Render
+import Sqlite (Database)
 import qualified Sqlite
 import System.Directory (createDirectoryIfMissing, removeFile)
 import System.Environment (getEnv)
@@ -57,11 +58,12 @@ import System.IO.Error (isDoesNotExistError)
 import System.Posix.Files (fileSize, getFileStatus)
 import System.Posix.Process (getProcessID)
 import Text.Read (readMaybe)
+import Web.Scotty (ActionM)
 import qualified Web.Scotty as Web
 import Prelude
 
 server :: Int -> IO ()
-server port = withImportDb $ \importDb -> do
+server port = withImportDb $ \importDatabase -> do
   homeDir <- getHomeDirectory
   let pidFile = homeDir <> "/server.pid"
   writeFile pidFile =<< show <$> getProcessID
@@ -107,11 +109,11 @@ server port = withImportDb $ \importDb -> do
   Web.scottyOpts opts $ do
     Web.post "/" $
       Json.eitherDecode <$> Web.body >>= \case
-        Right (tag, path) -> Web.json =<< liftIO (addImport importDb tag path)
+        Right (tag, path) -> Web.json =<< liftIO (addImport importDatabase tag path)
         Left err -> badRequest err
 
     Web.get "/" $
-      liftIO (listImports importDb) >>= \imports -> do
+      liftIO (listImports importDatabase) >>= \imports -> do
         indexJs <- liftIO indexJs
         html ("<script>" <> indexJs <> "</script>") $
           Text.unlines
@@ -156,11 +158,11 @@ server port = withImportDb $ \importDb -> do
 
     Web.delete "/:id/" $
       readMaybe <$> Web.param "id" >>= \case
-        Just id -> Web.json =<< liftIO (deleteImport importDb id)
+        Just id -> Web.json =<< liftIO (deleteImport importDatabase id)
         Nothing -> badRequest "invalid id"
 
     Web.get "/:id/" $ do
-      id <- importRoute importDb $ \id _ -> pure id
+      id <- importRoute importDatabase $ const . pure
       mainJs <- liftIO $ mainJs $ Text.pack $ show id
       html ("<script>" <> mainJs <> "</script>") ""
 
@@ -169,10 +171,10 @@ server port = withImportDb $ \importDb -> do
         Right (origin, destination) ->
           Web.json
             =<< importRoute
-              importDb
-              ( \id db ->
+              importDatabase
+              ( \id database ->
                   withMemo id $
-                    Query.findPath db origin destination
+                    Query.findPath database origin destination
               )
         Left err -> badRequest err
 
@@ -181,10 +183,10 @@ server port = withImportDb $ \importDb -> do
         Right (source, pattern, types) ->
           Web.json
             =<< importRoute
-              importDb
-              ( \id db ->
+              importDatabase
+              ( \id database ->
                   withMemo id $
-                    Query.floodNodes db 256 source pattern types
+                    Query.floodNodes database 256 source pattern types
               )
         Left err -> badRequest err
 
@@ -193,10 +195,10 @@ server port = withImportDb $ \importDb -> do
         Right pattern ->
           Web.json
             =<< importRoute
-              importDb
-              ( \id db ->
+              importDatabase
+              ( \id database ->
                   withMemo id $
-                    Query.filterNodes db 256 pattern
+                    Query.filterNodes database 256 pattern
               )
         Left err -> badRequest err
 
@@ -205,32 +207,36 @@ server port = withImportDb $ \importDb -> do
         Right nodeStates ->
           Web.text
             =<< importRoute
-              importDb
-              ( \id db ->
+              importDatabase
+              ( \id database ->
                   withMemo id $
-                    Render.renderOutput <$> Render.renderGraph db nodeStates
+                    Render.renderOutput <$> Render.renderGraph database nodeStates
               )
             <* Web.setHeader "Content-Type" "image/svg+xml"
         Left err -> badRequest err
   where
-    importRoute importDb action =
+    importRoute :: Database -> (UUID -> Database -> IO a) -> ActionM a
+    importRoute importDatabase action =
       readMaybe <$> Web.param "id" >>= \case
         Just id ->
-          liftIO (withImport importDb id $ action id) >>= \case
+          liftIO (withImport importDatabase id $ action id) >>= \case
             Nothing -> Web.raiseStatus notFound404 $ LazyText.pack "no such import"
             Just result -> pure result
         Nothing -> error "invalid import id"
 
+    themeCss :: IO Text
     themeCss =
       getSkyscopeEnv "THEME_CSS" >>= \case
         Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
         Just path -> Text.readFile path
 
+    indexJs :: IO Text
     indexJs =
       getSkyscopeEnv "INDEX_JS" >>= \case
         Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/index.js")
         Just path -> Text.readFile path
 
+    mainJs :: Text -> IO Text
     mainJs importId =
       let scriptHeader = "const importId = '" <> importId <> "';"
        in fmap (scriptHeader <>) $
@@ -248,15 +254,20 @@ server port = withImportDb $ \importDb -> do
                                     TH.StringL $ case found of
                                       [path] -> path
                                       [] -> ""
+                                      _ -> error "unexpectedly found multiple main.js files"
                             )
                        )
               Just path -> Text.readFile path
 
+    badRequest :: String -> ActionM a
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
+
+    favicon :: Text
     favicon =
       "<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 "
         <> "100 100%22><text y=%22.9em%22 font-size=%2290%22>🔭</text></svg>"
 
+    html :: Text -> Text -> ActionM ()
     html head body = do
       themeCss <- liftIO themeCss
       Web.html $
@@ -299,45 +310,46 @@ data Counts = Counts
   }
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-withImport :: Sqlite.Database -> UUID -> (Sqlite.Database -> IO a) -> IO (Maybe a)
-withImport importDb id action =
-  getImport importDb id >>= \case
+withImport :: Database -> UUID -> (Database -> IO a) -> IO (Maybe a)
+withImport importDatabase id action =
+  getImport importDatabase id >>= \case
     Just Import {..} -> Just <$> Sqlite.withDatabase importPath action
     Nothing -> pure Nothing
 
-addImport :: Sqlite.Database -> String -> FilePath -> IO (Maybe Import)
-addImport importDb tag path =
+addImport :: Database -> String -> FilePath -> IO (Maybe Import)
+addImport importDatabase tag path =
   if not $ hasDbSuffix path
     then error "expected database path to have .sqlite suffix"
     else do
       id <- UUID.nextRandom
       created <- getCurrentTime
-      Sqlite.executeSql
-        importDb
-        ["INSERT into import (id, tag, path, created) VALUES (?, ?, ?, ?);"]
-        (SQLText . Text.pack <$> [show id, tag, path, show created])
-      getImport importDb id
+      void $
+        Sqlite.executeSql
+          importDatabase
+          ["INSERT into import (id, tag, path, created) VALUES (?, ?, ?, ?);"]
+          (SQLText . Text.pack <$> [show id, tag, path, show created])
+      getImport importDatabase id
 
-deleteImport :: Sqlite.Database -> UUID -> IO Bool
-deleteImport importDb id =
-  getImport importDb id >>= \case
+deleteImport :: Database -> UUID -> IO Bool
+deleteImport importDatabase id =
+  getImport importDatabase id >>= \case
     Just Import {..} ->
       if hasDbSuffix importPath
         then do
-          tryJust (guard . isDoesNotExistError) (removeFile importPath)
+          void $ tryJust (guard . isDoesNotExistError) (removeFile importPath)
           True
             <$ Sqlite.executeSql
-              importDb
+              importDatabase
               ["DELETE FROM import WHERE id = ?;"]
               [SQLText $ Text.pack $ show id]
         else pure False
     Nothing -> pure False
 
-getImport :: Sqlite.Database -> UUID -> IO (Maybe Import)
-getImport importDb id = do
+getImport :: Database -> UUID -> IO (Maybe Import)
+getImport importDatabase id = do
   rows <-
     Sqlite.executeSql
-      importDb
+      importDatabase
       ["SELECT id, tag, path, created FROM import WHERE id = ?;"]
       [SQLText $ Text.pack $ show id]
   case rows of
@@ -353,43 +365,46 @@ getImport importDb id = do
       pure $
         readMaybe (Text.unpack c) <&> \created ->
           Import id tag path created (fromRight 0 usage) (fromRight Nothing counts)
+    _ -> error "should be impossible due to primary key constraint on id column"
 
-getCounts :: Sqlite.Database -> IO (Maybe Counts)
-getCounts db =
+getCounts :: Database -> IO (Maybe Counts)
+getCounts database =
   handleSQLError $
     sequenceCounts $
       (,)
-        <$> Sqlite.executeSqlScalar db ["SELECT COUNT(*) FROM node;"] []
-        <*> Sqlite.executeSqlScalar db ["SELECT COUNT(*) FROM edge;"] []
+        <$> Sqlite.executeSqlScalar database ["SELECT COUNT(*) FROM node;"] []
+        <*> Sqlite.executeSqlScalar database ["SELECT COUNT(*) FROM edge;"] []
         <&> join bitraverse Sqlite.fromSQLInteger
   where
     handleSQLError = handle @SQLError $ const $ pure Nothing
     sequenceCounts = fmap $ fmap $ uncurry Counts
 
-listImports :: Sqlite.Database -> IO [Import]
-listImports importDb = do
+listImports :: Database -> IO [Import]
+listImports importDatabase = do
   rows <-
     Sqlite.executeSql
-      importDb
+      importDatabase
       ["SELECT id FROM import ORDER BY created DESC;"]
       []
   fmap catMaybes $
     for rows $ \case
       [SQLText id] -> case readMaybe $ Text.unpack id of
-        Just id -> getImport importDb id
+        Just id -> getImport importDatabase id
+        Nothing -> error $ "failed to parse uuid: " <> Text.unpack id
+      _ -> error "did not expect multiple columns"
 
-withImportDb :: (Sqlite.Database -> IO a) -> IO a
+withImportDb :: (Database -> IO a) -> IO a
 withImportDb action = do
   dir <- getHomeDirectory
   let path = dir <> "/imports.sqlite"
-  Sqlite.withDatabase path $ \db -> do
-    createSchema db
-    action db
+  Sqlite.withDatabase path $ \database -> do
+    createSchema database
+    action database
 
-createSchema :: Sqlite.Database -> IO ()
-createSchema db =
+createSchema :: Database -> IO ()
+createSchema database =
   Sqlite.executeStatements
-    db
+    database
     [ [ "CREATE TABLE IF NOT EXISTS import (",
         "  id TEXT,",
         "  tag TEXT,",
