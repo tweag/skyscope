@@ -73,7 +73,7 @@ div#SearchBox {
     border: 1px solid hsl(197, 23%, 40%);
     display: flex;
     flex-direction: column;
-    margin: 30px;
+    margin: 30px 80px;
     opacity: 95%;
     overflow: hidden;
     pointer-events: auto;
@@ -263,4 +263,22 @@ g.edge.Animate path, g.edge:hover path {
     to {
         stroke-dashoffset: 0;
     }
+}
+
+a#save {
+    bottom: 16px;
+    height: 48px;
+    opacity: 80%;
+    position: fixed;
+    right: 16px;
+    width: 48px;
+}
+
+a#save button {
+    background-color: hsl(197, 29%, 90%);
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 32px;
+    height: 100%;
+    width: 100%;
 }
