@@ -87,6 +87,7 @@ load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
     attachGraphRenderer graph nodeConfiguration nodeClickHandler
     searchBox /\ focusInput <- createSearchBox nodeConfiguration
     appendElement searchBox body
+    createSaveButton body
     focusInput
 
 type NodeHash = String
@@ -279,6 +280,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
            void $ Timer.setTimeout animationDuration do
               removeClass element "Changed"
               scrollIntoView element
+      updateSaveLink
 
   where
     makeRenderer :: Effect (Aff Element)
@@ -349,6 +351,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
              Element.setAttribute "dur" duration animate
              Element.setAttribute "from" from animate
              Element.setAttribute "to" "0 0" animate
+             addClass animate "animation"
 
     animateFadeIn :: Element -> Effect Unit
     animateFadeIn element = do
@@ -359,6 +362,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
       Element.setAttribute "fill" "freeze" animate
       Element.setAttribute "dur" duration animate
       Element.setAttribute "values" "0;1" animate
+      addClass animate "animation"
 
     animationDuration :: Int
     animationDuration = 200
@@ -628,6 +632,11 @@ formatNodeType nodeType
       Nothing -> ""
     regex = Regex.unsafeRegex "[_]+" Regex.noFlags
 
+createSaveButton :: Element -> Effect Unit
+createSaveButton body = do
+  saveLink <- createElement "a" "save" (Just body)
+  setTextContent "💾" =<< createElement "button" "" (Just saveLink)
+
 makeThrottledAction :: forall a. Aff a -> Effect (Aff a)
 makeThrottledAction action = do
   mutex <- Effect.AVar.new unit
@@ -727,6 +736,8 @@ foreign import onScroll :: Element -> Effect Unit -> Effect Unit
 foreign import pushHistory :: Json -> Effect Unit
 
 foreign import onPopHistory :: (Json -> Effect Unit) -> Effect Unit
+
+foreign import updateSaveLink :: Effect Unit
 
 undefined :: forall a. a
 undefined = unsafeCoerce unit

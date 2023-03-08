@@ -52,3 +52,27 @@ export function onPopHistory(action) {
         });
     }
 }
+
+// foreign import updateSaveLink :: Effect Unit
+export function updateSaveLink() {
+    const link = document.getElementById("save");
+    const existingUrl = link.getAttribute("href");
+    if (existingUrl) {
+        URL.revokeObjectURL(existingUrl);
+    }
+    const svg = document.getElementById("graph").firstChild.cloneNode(true);
+    Array.from(svg.getElementsByClassName("animation")).forEach(animation => animation.parentNode.removeChild(animation));
+    Array.from(svg.getElementsByClassName("Changed")).forEach(element => element.classList.remove("Changed"));
+    Array.from(svg.getElementsByTagName("a")).forEach(a => a.removeAttribute("xlink:title"));
+    Array.from(svg.getElementsByTagName("title")).forEach(title => title.parentNode.removeChild(title));
+    const style = document.getElementsByTagName("style")[0].cloneNode(true);
+    style.textContent = style.textContent.replaceAll("cursor: pointer", "cursor: auto")
+    svg.appendChild(style);
+    const xml = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([xml], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    const basename = importTag.match(/[^\/]*$/)[0];
+    const filename = `${basename} ${new Date().toLocaleString()}.svg`;
+    link.setAttribute("download", filename);
+}

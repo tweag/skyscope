@@ -162,64 +162,44 @@ server port = withImportDb $ \importDatabase -> do
         Nothing -> badRequest "invalid id"
 
     Web.get "/:id/" $ do
-      id <- importRoute importDatabase $ const . pure
-      mainJs <- liftIO $ mainJs $ Text.pack $ show id
+      Import {..} <- importRoute importDatabase $ const . pure
+      let id = Text.pack $ show importId
+      mainJs <- liftIO $ mainJs id importTag
       html ("<script>" <> mainJs <> "</script>") ""
 
     Web.post "/:id/path" $
       Json.eitherDecode <$> Web.body >>= \case
         Right (origin, destination) ->
-          Web.json
-            =<< importRoute
-              importDatabase
-              ( \id database ->
-                  withMemo id $
-                    Query.findPath database origin destination
-              )
+          let route Import {..} database = withMemo importId $ Query.findPath database origin destination
+           in Web.json =<< importRoute importDatabase route
         Left err -> badRequest err
 
     Web.post "/:id/flood" $
       Json.eitherDecode <$> Web.body >>= \case
         Right (source, pattern, types) ->
-          Web.json
-            =<< importRoute
-              importDatabase
-              ( \id database ->
-                  withMemo id $
-                    Query.floodNodes database 256 source pattern types
-              )
+          let route Import {..} database = withMemo importId $ Query.floodNodes database 256 source pattern types
+           in Web.json =<< importRoute importDatabase route
         Left err -> badRequest err
 
     Web.post "/:id/filter" $
       Json.eitherDecode <$> Web.body >>= \case
         Right pattern ->
-          Web.json
-            =<< importRoute
-              importDatabase
-              ( \id database ->
-                  withMemo id $
-                    Query.filterNodes database 256 pattern
-              )
+          let route Import {..} database = withMemo importId $ Query.filterNodes database 256 pattern
+           in Web.json =<< importRoute importDatabase route
         Left err -> badRequest err
 
     Web.post "/:id/render" $
       Json.eitherDecode <$> Web.body >>= \case
         Right nodeStates ->
-          Web.text
-            =<< importRoute
-              importDatabase
-              ( \id database ->
-                  withMemo id $
-                    Render.renderOutput <$> Render.renderGraph database nodeStates
-              )
-            <* Web.setHeader "Content-Type" "image/svg+xml"
+          let route Import {..} database = withMemo importId $ Render.renderOutput <$> Render.renderGraph database nodeStates
+           in Web.text =<< importRoute importDatabase route <* Web.setHeader "Content-Type" "image/svg+xml"
         Left err -> badRequest err
   where
-    importRoute :: Database -> (UUID -> Database -> IO a) -> ActionM a
+    importRoute :: Database -> (Import -> Database -> IO a) -> ActionM a
     importRoute importDatabase action =
       readMaybe <$> Web.param "id" >>= \case
         Just id ->
-          liftIO (withImport importDatabase id $ action id) >>= \case
+          liftIO (withImport importDatabase id action) >>= \case
             Nothing -> Web.raiseStatus notFound404 $ LazyText.pack "no such import"
             Just result -> pure result
         Nothing -> error "invalid import id"
@@ -236,9 +216,13 @@ server port = withImportDb $ \importDatabase -> do
         Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/index.js")
         Just path -> Text.readFile path
 
-    mainJs :: Text -> IO Text
-    mainJs importId =
-      let scriptHeader = "const importId = '" <> importId <> "';"
+    mainJs :: Text -> Text -> IO Text
+    mainJs importId importTag =
+      let scriptHeader =
+            Text.unlines
+              [ "const importId = '" <> importId <> "';",
+                "const importTag = '" <> importTag <> "';"
+              ]
        in fmap (scriptHeader <>) $
             getSkyscopeEnv "MAIN_JS" >>= \case
               Nothing ->
@@ -310,10 +294,10 @@ data Counts = Counts
   }
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
-withImport :: Database -> UUID -> (Database -> IO a) -> IO (Maybe a)
+withImport :: Database -> UUID -> (Import -> Database -> IO a) -> IO (Maybe a)
 withImport importDatabase id action =
   getImport importDatabase id >>= \case
-    Just Import {..} -> Just <$> Sqlite.withDatabase importPath action
+    Just Import {..} -> Just <$> Sqlite.withDatabase importPath (action Import {..})
     Nothing -> pure Nothing
 
 addImport :: Database -> String -> FilePath -> IO (Maybe Import)
