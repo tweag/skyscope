@@ -10,6 +10,7 @@ module Render where
 import Common
 import Control.Arrow ((&&&))
 import Control.Category ((>>>))
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM.TVar (TVar)
 import Control.Monad (guard)
 import Control.Monad.IO.Class (MonadIO (..))
@@ -33,12 +34,12 @@ import qualified Data.Text.Lazy as LazyText
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData (..))
 import Model
+import Prelude
 import Query (HasFindPathMemo, findPath)
-import Sqlite (Database)
 import qualified Sqlite
+import Sqlite (Database)
 import System.Exit (ExitCode (..))
 import System.Process.Text (readProcessWithExitCode)
-import Prelude
 
 data RenderResult = RenderResult
   { renderOutput :: LazyText.Text,
@@ -54,6 +55,7 @@ renderGraph ::
   Memoize r RenderResult
 renderGraph database nodeStates = do
   -- TODO: memoize rendered svgs
+  --liftIO $ threadDelay 1800000
 
   let selectEdges :: NodeHash -> Text -> IO [[SQLData]]
       selectEdges nodeHash whereClause =

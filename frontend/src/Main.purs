@@ -2,6 +2,7 @@ module Main where
 
 import Affjax.RequestBody as Affjax.RequestBody
 import Affjax.ResponseFormat as Affjax.ResponseFormat
+import Affjax.StatusCode (StatusCode(..))
 import Affjax.Web as Affjax
 import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
@@ -15,6 +16,8 @@ import Data.Argonaut.Encode.Class (class EncodeJson)
 import Data.Argonaut.Encode.Generic (genericEncodeJson)
 import Data.Array as Array
 import Data.Array.NonEmpty as Array.NonEmpty
+import Data.DateTime as DateTime
+import Data.DateTime.Instant as Instant
 import Data.Either (Either(..), fromRight)
 import Data.Foldable (any, foldMap, foldl, for_, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
@@ -28,6 +31,7 @@ import Data.String.Pattern (Pattern(..), Replacement(..))
 import Data.String.Regex (match, replace, split) as Regex
 import Data.String.Regex.Flags (global, ignoreCase, noFlags) as Regex
 import Data.String.Regex.Unsafe (unsafeRegex) as Regex
+import Data.Time.Duration (Milliseconds(..))
 import Data.Traversable (sequence, traverse)
 import Data.Tuple (Tuple(..))
 import Data.Tuple.Nested ((/\), type (/\))
@@ -40,12 +44,14 @@ import Effect.Class (liftEffect)
 import Effect.Console as Console
 import Effect.Exception (Error)
 import Effect.Exception as Exception
+import Effect.Now (now)
 import Effect.Ref as Ref
 import Effect.Timer as Timer
 import Foreign.Object (Object)
 import Foreign.Object as Object
 import Prelude
 import Signal (runSignal) as Signal
+import Signal.Channel (Channel)
 import Signal.Channel (channel, send, subscribe) as Signal
 import Unsafe.Coerce (unsafeCoerce)
 import Web.DOM.DOMTokenList as DOMTokenList
@@ -82,12 +88,13 @@ load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
   Just bodyElement -> do
     nodeConfiguration <- makeNodeConfiguration
     let body = HTMLElement.toElement bodyElement
-    graph <- createElement "div" "graph" $ Just body
+    graph <- createElement "div" "Graph" $ Just body
     nodeClickHandler <- makeTools graph nodeConfiguration
-    attachGraphRenderer graph nodeConfiguration nodeClickHandler
+    renderState <- attachGraphRenderer graph nodeConfiguration nodeClickHandler
     searchBox /\ focusInput <- createSearchBox nodeConfiguration
     appendElement searchBox body
-    createSaveButton body
+    tray <- createTray renderState
+    appendElement tray body
     focusInput
 
 type NodeHash = String
@@ -129,11 +136,12 @@ makeNodeConfiguration = do
       jsonState = Argonaut.fromString <<< Show.show
       modify push changedNodeHash f = do
         Ref.modify_ f nodeStates
-        when push $ pushHistory <<< Argonaut.encodeJson =<< Ref.read nodeStates
+        when push $ pushHistory <<< Argonaut.encodeJson =<<
+          (changedNodeHash /\ _) <$> Ref.read nodeStates
         notify changedNodeHash
   onPopHistory $ Argonaut.decodeJson >>> case _ of
     Left err -> error $ "failed to decode history: " <> Show.show err
-    Right state -> modify false Nothing (const state)
+    Right (changedNodeHash /\ state) -> modify false changedNodeHash (const state)
   pure { onChange, show, hide, get, visible, json }
 
 defaultState :: Object NodeState
@@ -190,7 +198,7 @@ makeTools graph nodeConfiguration = do
 
     openPath :: Element -> Effect Unit
     openPath edge = Element.id edge <#> split (Pattern "_") >>= case _ of
-      [ origin, destination ] -> runAff do
+      [ origin, destination ] -> launchAff do
           url <- liftEffect $ getImportId <#> (_ <> "/path")
           result <- Affjax.post Affjax.ResponseFormat.json url
             $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray
@@ -255,44 +263,68 @@ orderOutsideIn a = if Array.length a `mod` 2 == 0
     Just { head, tail } -> [ head ] <> orderOutsideIn tail
     Nothing -> a
 
-attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler Boolean -> Effect Unit
+data RenderState
+  = RenderInit
+  | Rendering Int
+  | RenderDone Milliseconds
+  | RenderFail (Maybe StatusCode)
+
+attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler Boolean -> Effect (Channel RenderState)
 attachGraphRenderer graph nodeConfiguration onClick = do
   render <- makeRenderer
-  nodeConfiguration.onChange \changedNodeHash ->
-    runAff $ render >>= \svg -> liftEffect do
-      decorateGraph svg \click event -> do
-        handled <- onClick click event
-        if handled then pure unit else case click of
-          NodeClick element -> do
-            hash <- Element.id element
-            if MouseEvent.ctrlKey event
-              then nodeConfiguration.hide hash
-              else containsClass element "Expanded" >>= if _
-                then nodeConfiguration.show hash Collapsed
-                else nodeConfiguration.show hash Expanded
-          _ -> pure unit
-      removeAllChildren graph
-      appendElement svg graph
-      for_ changedNodeHash $ getElementById >=> case _ of
-        Nothing -> error "can't find changed node"
-        Just element -> do
-           addClass element "Changed"
-           void $ Timer.setTimeout animationDuration do
-              removeClass element "Changed"
-              scrollIntoView element
-      updateSaveLink
+  renderState <- Signal.channel RenderInit
+  renderState <$ nodeConfiguration.onChange \changedNodeHash -> do
+    visibleCount <- Array.length <$> nodeConfiguration.visible
+    let notify = Signal.send renderState
+    notify $ Rendering visibleCount
+    startTime <- Instant.toDateTime <$> now
+    let runAff = Aff.runAff_ $ case _ of
+          Left err -> do
+            logError $ show err
+            notify $ RenderFail Nothing
+          Right (Left statusCode) -> do
+            notify $ RenderFail $ Just statusCode
+          Right (Right _) -> do
+            endTime <- Instant.toDateTime <$> now
+            notify $ RenderDone $ DateTime.diff endTime startTime
+
+    runAff $ render >>= liftEffect <<< case _ of
+      Left statusCode -> pure $ Left statusCode
+      Right svg -> Right unit <$ do
+        decorateGraph svg \click event -> do
+          handled <- onClick click event
+          if handled then pure unit else case click of
+            NodeClick element -> do
+              hash <- Element.id element
+              if MouseEvent.ctrlKey event
+                then nodeConfiguration.hide hash
+                else containsClass element "Expanded" >>= if _
+                  then nodeConfiguration.show hash Collapsed
+                  else nodeConfiguration.show hash Expanded
+            _ -> pure unit
+        removeAllChildren graph
+        appendElement svg graph
+        for_ changedNodeHash $ getElementById >=> case _ of
+          Nothing -> error "can't find changed node"
+          Just element -> do
+             addClass element "Changed"
+             void $ Timer.setTimeout animationDuration do
+                removeClass element "Changed"
+                scrollIntoView element
 
   where
-    makeRenderer :: Effect (Aff Element)
+    makeRenderer :: Effect (Aff (Either StatusCode Element))
     makeRenderer = makeThrottledAction do
       url <- liftEffect $ getImportId <#> (_ <> "/render")
       result <- Affjax.post Affjax.ResponseFormat.document url
         <<< Just <<< Affjax.RequestBody.json =<< liftEffect nodeConfiguration.json
       liftEffect $ case result of
         Left err -> error $ Affjax.printError err
-        Right response -> do
-          svg <- HTMLCollection.item 0 =<< Document.getElementsByTagName "svg" response.body
-          maybe (error "svg element not found") pure svg
+        Right response -> case response.status of
+          StatusCode 200 -> do
+            svg <- HTMLCollection.item 0 =<< Document.getElementsByTagName "svg" response.body
+            maybe (error "svg element not found") (pure <<< Right) svg
+          status -> pure $ Left status
 
     decorateGraph :: Element -> ClickHandler Unit -> Effect Unit
     decorateGraph svg handleClick = do
@@ -351,7 +383,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
              Element.setAttribute "dur" duration animate
              Element.setAttribute "from" from animate
              Element.setAttribute "to" "0 0" animate
-             addClass animate "animation"
+             addClass animate "Animation"
 
     animateFadeIn :: Element -> Effect Unit
     animateFadeIn element = do
@@ -362,7 +394,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
       Element.setAttribute "fill" "freeze" animate
       Element.setAttribute "dur" duration animate
       Element.setAttribute "values" "0;1" animate
-      addClass animate "animation"
+      addClass animate "Animation"
 
     animationDuration :: Int
     animationDuration = 200
@@ -573,7 +605,7 @@ createSearchBox nodeConfiguration = do
   for_ [ EventTypes.change, EventTypes.focus, EventTypes.input ] $
     flip onPatternInputEvent $ const do
       addClass searchBox "Expanded"
-      runAff updateSearch
+      launchAff updateSearch
       resetSearchBoxFade
 
   let collapseSearch :: Effect Unit
@@ -632,10 +664,50 @@ formatNodeType nodeType
       Nothing -> ""
     regex = Regex.unsafeRegex "[_]+" Regex.noFlags
 
-createSaveButton :: Element -> Effect Unit
-createSaveButton body = do
-  saveLink <- createElement "a" "save" (Just body)
-  setTextContent "💾" =<< createElement "button" "" (Just saveLink)
+createTray :: Channel RenderState -> Effect Element
+createTray renderState = do
+  tray <- createElement "div" "Tray" Nothing
+
+  let createIcon content tooltip parent = do
+        icon <- createElement "span" "Icon" $ Just parent
+        Element.setAttribute "title" tooltip icon
+        setTextContent content icon
+        pure icon
+
+      withDiv className populate = do
+        removeAllChildren tray
+        div <- createElement "div" "" $ Just tray
+        void $ Timer.setTimeout 100 $ addClass div className
+        populate div
+
+  Signal.runSignal $ Signal.subscribe renderState <#> case _ of
+    RenderInit -> pure unit
+
+    Rendering visibleCount -> withDiv "Rendering" \div -> do
+      status <- createElement "span" "Status" $ Just div
+      setTextContent ("Rendering " <> show visibleCount <> " nodes") status
+      icon <- createIcon "⏳" "Interrupt" div
+      listener <- EventTarget.eventListener \event ->
+        for_ (MouseEvent.fromEvent event) \mouseEvent ->
+          when (MouseEvent.button mouseEvent == 0) do
+            Console.log "INTERRUPT!"
+      EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget icon
+
+    RenderDone (Milliseconds elapsed) -> withDiv "RenderDone" \div -> do
+      status <- createElement "span" "Status" $ Just div
+      setTextContent (fromRight "" $ formatNumber "0,0" elapsed <#> (_ <> "ms")) status
+      saveLink <- createElement "a" "Save" $ Just div
+      void $ createIcon "💾" "Save image" saveLink
+      updateSaveLink
+
+    RenderFail statusCode -> withDiv "RenderFail" \div -> do
+      status <- createElement "span" "Status" $ Just div
+      let content = case statusCode of
+            Nothing -> "Request failed"
+            Just (StatusCode code) -> "Rendering failed: " <> show code
+      setTextContent content status
+
+  pure tray
 
 makeThrottledAction :: forall a. Aff a -> Effect (Aff a)
 makeThrottledAction action = do
@@ -647,10 +719,13 @@ makeThrottledAction action = do
           then action else Aff.throwError $ Aff.error "action superseded"
     Aff.bracket (AVar.take mutex) (flip AVar.put mutex) (const run)
 
-runAff :: Aff Unit -> Effect Unit
-runAff = Aff.runAff_ $ case _ of
-  Left err | shouldShow err -> Console.errorShow err
+launchAff :: Aff Unit -> Effect Unit
+launchAff = Aff.runAff_ $ case _ of
+  Left err -> logError $ show err
   _ -> pure unit
+
+logError :: String -> Effect Unit
+logError s = when (shouldShow s) (Console.error s)
   where
     contains err = flip String.contains (show err) <<< Pattern
     shouldShow err = not $ Array.any (contains err)
