@@ -53,7 +53,7 @@ export function onPopHistory(action) {
     }
 }
 
-// foreign import updateSaveLink :: Effect Unit
+// updateSaveLink :: Effect Unit
 export function updateSaveLink() {
     const link = document.getElementById("Save");
     const existingUrl = link.getAttribute("href");
@@ -78,4 +78,16 @@ export function updateSaveLink() {
     const basename = importTag.match(/[^\/]*$/)[0];
     const filename = `${basename} ${new Date().toLocaleString()}.svg`;
     link.setAttribute("download", filename);
+}
+
+// foreign import setCheckpoint :: Json -> Effect Unit
+export function setCheckpoint(state) {
+    return function() {
+        window.localStorage.setItem(importId, JSON.stringify(state));
+    }
+}
+
+// foreign import getCheckpoint :: Effect Json
+export function getCheckpoint() {
+    return JSON.parse(window.localStorage.getItem(importId));
 }
