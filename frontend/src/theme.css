@@ -50,7 +50,7 @@ div.button input {
     margin: 5px 0px;
 }
 
-div#graph {
+div#Graph {
     text-align: center;
     margin-top: 128px;
 }
@@ -73,7 +73,7 @@ div#SearchBox {
     border: 1px solid hsl(197, 23%, 40%);
     display: flex;
     flex-direction: column;
-    margin: 30px 60px 60px;
+    margin: 30px 60px 70px;
     /*opacity: 95%;*/
     overflow: hidden;
     pointer-events: auto;
@@ -94,7 +94,7 @@ input#PatternInput {
     border-radius: 5px;
     flex-grow: 1;
     font-size: 18px;
-    min-width: 600px;
+    min-width: 300px;
     padding: 5px 10px;
     text-align: center;
     text-overflow: ellipsis;
@@ -328,6 +328,7 @@ a#Save {
 
 span#Icon {
     font-size: 24px;
+    cursor: pointer;
 }
 
 div.Rendering span#Icon {
@@ -343,22 +344,3 @@ div.Rendering span#Icon {
      65% { transform: rotate(360deg); }
     100% { transform: rotate(360deg); }
 }
-
-
-
-
-
-a#save {
-    align-items: center;
-    border: 1px red solid;
-    bottom: 8px;
-    display: flex;
-    height: 32px;
-    justify-content: center;
-    opacity: 80%;
-    position: fixed;
-    right: 8px;
-    text-decoration: none;
-    width: 32px;
-}
-

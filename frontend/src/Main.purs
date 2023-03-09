@@ -6,14 +6,14 @@ import Affjax.StatusCode (StatusCode(..))
 import Affjax.Web as Affjax
 import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
+import Data.Argonaut (jsonEmptyObject) as Argonaut
 import Data.Argonaut.Core (Json)
-import Data.Argonaut.Core (fromArray, fromObject, fromString, toArray, toString) as Argonaut
+import Data.Argonaut.Core (fromArray, fromString, toArray, toString) as Argonaut
 import Data.Argonaut.Decode (decodeJson) as Argonaut
 import Data.Argonaut.Decode.Class (class DecodeJson)
-import Data.Argonaut.Decode.Generic (genericDecodeJson)
+import Data.Argonaut.Decode.Error (JsonDecodeError(..)) as Argonaut
 import Data.Argonaut.Encode (encodeJson) as Argonaut
 import Data.Argonaut.Encode.Class (class EncodeJson)
-import Data.Argonaut.Encode.Generic (genericEncodeJson)
 import Data.Array as Array
 import Data.Array.NonEmpty as Array.NonEmpty
 import Data.DateTime as DateTime
@@ -21,7 +21,6 @@ import Data.DateTime.Instant as Instant
 import Data.Either (Either(..), fromRight)
 import Data.Foldable (any, foldMap, foldl, for_, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
-import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Number as Number
 import Data.Show as Show
@@ -68,6 +67,7 @@ import Web.HTML.Event.EventTypes (change, click, focus, input, load) as EventTyp
 import Web.HTML.HTMLDocument as HTMLDocument
 import Web.HTML.HTMLElement as HTMLElement
 import Web.HTML.HTMLInputElement as HTMLInputElement
+import Web.HTML.Location as Location
 import Web.HTML.Window as Window
 import Web.UIEvent.KeyboardEvent as KeyboardEvent
 import Web.UIEvent.KeyboardEvent.EventTypes (keydown, keyup) as EventTypes
@@ -87,13 +87,14 @@ load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
   Nothing -> error "html <body> element not found"
   Just bodyElement -> do
     nodeConfiguration <- makeNodeConfiguration
+    nodeConfiguration.set =<< getCheckpoint
     let body = HTMLElement.toElement bodyElement
     graph <- createElement "div" "Graph" $ Just body
     nodeClickHandler <- makeTools graph nodeConfiguration
     renderState <- attachGraphRenderer graph nodeConfiguration nodeClickHandler
     searchBox /\ focusInput <- createSearchBox nodeConfiguration
     appendElement searchBox body
-    tray <- createTray renderState
+    tray <- createTray nodeConfiguration renderState
     appendElement tray body
     focusInput
 
@@ -101,13 +102,14 @@ type NodeHash = String
 
 data NodeState = Collapsed | Expanded
 
-derive instance genericNodeState :: Generic NodeState _
-
 instance decodeJsonNodeState :: DecodeJson NodeState where
-  decodeJson = genericDecodeJson
+  decodeJson json = case Argonaut.toString json of
+    Just "Collapsed" -> Right Collapsed
+    Just "Expanded" -> Right Expanded
+    _ -> Left $ Argonaut.UnexpectedValue json
 
 instance encodeJsonNodeState :: EncodeJson NodeState where
-  encodeJson = genericEncodeJson
+  encodeJson = Argonaut.fromString <<< show
 
 instance Show NodeState where
   show Collapsed = "Collapsed"
@@ -117,9 +119,9 @@ type NodeConfiguration =
   { onChange :: (Maybe NodeHash -> Effect Unit) -> Effect Unit
   , show :: NodeHash -> NodeState -> Effect Unit
   , hide :: NodeHash -> Effect Unit
-  , get :: NodeHash -> Effect (Maybe NodeState)
   , visible :: Effect (Array NodeHash)
-  , json :: Effect Json
+  , set :: Json -> Effect Unit
+  , get :: Effect Json
   }
 
 makeNodeConfiguration :: Effect NodeConfiguration
@@ -130,10 +132,11 @@ makeNodeConfiguration = do
       onChange action = Signal.runSignal $ action <$> Signal.subscribe channel
       show hash state = modify true (Just hash) (Object.insert hash state)
       hide hash = modify true Nothing (Object.delete hash)
-      get hash = Object.lookup hash <$> Ref.read nodeStates
       visible = Object.keys <$> Ref.read nodeStates
-      json = Argonaut.fromObject <<< map jsonState <$> Ref.read nodeStates
-      jsonState = Argonaut.fromString <<< Show.show
+      set json = case Argonaut.decodeJson json of
+        Right s -> Ref.write s nodeStates *> notify Nothing
+        Left err -> error $ Show.show err
+      get = Argonaut.encodeJson <$> Ref.read nodeStates
       modify push changedNodeHash f = do
         Ref.modify_ f nodeStates
         when push $ pushHistory <<< Argonaut.encodeJson =<<
@@ -142,7 +145,7 @@ makeNodeConfiguration = do
   onPopHistory $ Argonaut.decodeJson >>> case _ of
     Left err -> error $ "failed to decode history: " <> Show.show err
     Right (changedNodeHash /\ state) -> modify false changedNodeHash (const state)
-  pure { onChange, show, hide, get, visible, json }
+  pure { onChange, show, hide, visible, set, get }
 
 defaultState :: Object NodeState
 defaultState = Object.fromFoldable
@@ -269,55 +272,65 @@ data RenderState
   | RenderDone Milliseconds
   | RenderFail (Maybe StatusCode)
 
+instance Show RenderState where
+  show = case _ of
+    RenderInit -> "RenderInit"
+    Rendering visibleCount -> "Rendering " <> show visibleCount
+    RenderDone elapsedTime -> "RenderDone (" <> show elapsedTime <> ")"
+    RenderFail statusCode -> "RenderFail (" <> show statusCode <> ")"
+
 attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler Boolean -> Effect (Channel RenderState)
 attachGraphRenderer graph nodeConfiguration onClick = do
   render <- makeRenderer
   renderState <- Signal.channel RenderInit
   renderState <$ nodeConfiguration.onChange \changedNodeHash -> do
-    visibleCount <- Array.length <$> nodeConfiguration.visible
-    let notify = Signal.send renderState
-    notify $ Rendering visibleCount
+    let notify st = Signal.send renderState st
     startTime <- Instant.toDateTime <$> now
     let runAff = Aff.runAff_ $ case _ of
           Left err -> do
-            logError $ show err
-            notify $ RenderFail Nothing
+            shown <- logError $ show err
+            when shown $ notify $ RenderFail Nothing
           Right (Left statusCode) -> do
             notify $ RenderFail $ Just statusCode
           Right (Right _) -> do
             endTime <- Instant.toDateTime <$> now
             notify $ RenderDone $ DateTime.diff endTime startTime
 
-    runAff $ render >>= liftEffect <<< case _ of
-      Left statusCode -> pure $ Left statusCode
-      Right svg -> Right unit <$ do
-        decorateGraph svg \click event -> do
-          handled <- onClick click event
-          if handled then pure unit else case click of
-            NodeClick element -> do
-              hash <- Element.id element
-              if MouseEvent.ctrlKey event
-                then nodeConfiguration.hide hash
-                else containsClass element "Expanded" >>= if _
-                  then nodeConfiguration.show hash Collapsed
-                  else nodeConfiguration.show hash Expanded
-            _ -> pure unit
-        removeAllChildren graph
-        appendElement svg graph
-        for_ changedNodeHash $ getElementById >=> case _ of
-          Nothing -> error "can't find changed node"
-          Just element -> do
-             addClass element "Changed"
-             void $ Timer.setTimeout animationDuration do
-                removeClass element "Changed"
+    runAff do
+      liftEffect do
+        visibleCount <- Array.length <$> nodeConfiguration.visible
+        notify $ Rendering visibleCount
+      render >>= liftEffect <<< case _ of
+        Left statusCode -> pure $ Left statusCode
+        Right svg -> Right unit <$ do
+          decorateGraph svg \click event -> do
+            handled <- onClick click event
+            if handled then pure unit else case click of
+              NodeClick element -> do
+                hash <- Element.id element
+                if MouseEvent.ctrlKey event
+                  then nodeConfiguration.hide hash
+                  else containsClass element "Collapsed" >>= if _
+                    then nodeConfiguration.show hash Expanded
+                    else nodeConfiguration.show hash Collapsed
+              _ -> pure unit
+          removeAllChildren graph
+          appendElement svg graph
+          for_ changedNodeHash $ getElementById >=> case _ of
+            Nothing -> error "can't find changed node"
+            Just element -> do
+              addClass element "Changed"
+              void $ Timer.setTimeout (2 * animationDuration) do
                 scrollIntoView element
+                void $ Timer.setTimeout animationDuration $
+                  removeClass element "Changed"
 
   where
     makeRenderer :: Effect (Aff (Either StatusCode Element))
     makeRenderer = makeThrottledAction do
       url <- liftEffect $ getImportId <#> (_ <> "/render")
       result <- Affjax.post Affjax.ResponseFormat.document url
-        <<< Just <<< Affjax.RequestBody.json =<< liftEffect nodeConfiguration.json
+        <<< Just <<< Affjax.RequestBody.json =<< liftEffect nodeConfiguration.get
       liftEffect $ case result of
         Left err -> error $ Affjax.printError err
         Right response -> case response.status of
@@ -514,21 +527,19 @@ createSearchBox nodeConfiguration = do
   searchResults <- createElement "div" "SearchResults" $ Just searchBox
   let renderResults :: NodeResults -> String -> Effect Unit
       renderResults results pattern = do
-        let total = results.resultTotalNodes
-        void $ Ref.modify (max total) nodeCountMaxRef
-        updateNodeCount "found" total
         removeAllChildren searchResults
         sequence_ $ Object.toArrayWithKey (renderResultRow pattern) results.resultNodes
 
       renderResultRow :: String -> NodeHash -> { nodeData :: String, nodeType :: String } -> Effect Unit
       renderResultRow pattern hash node = do
         row <- createElement "div" "" $ Just searchResults
-        let updateSelected = nodeConfiguration.get hash >>= case _ of
-              Nothing -> removeClass row "Selected"
-              Just _ -> addClass row "Selected"
-            toggleSelected = nodeConfiguration.get hash >>= case _ of
-              Nothing -> nodeConfiguration.show hash Expanded *> updateSelected
-              Just _ -> nodeConfiguration.hide hash *> updateSelected
+        let updateSelected = visible >>= if _
+              then removeClass row "Selected"
+              else addClass row "Selected"
+            toggleSelected = visible >>= if _
+              then nodeConfiguration.show hash Expanded *> updateSelected
+              else nodeConfiguration.hide hash *> updateSelected
+            visible = Array.notElem hash <$> nodeConfiguration.visible
         listener <- EventTarget.eventListener $ const toggleSelected
         EventTarget.addEventListener EventTypes.click
           listener false $ Element.toEventTarget row
@@ -594,18 +605,22 @@ createSearchBox nodeConfiguration = do
   onElementEvent searchBox EventTypes.click $ const resetSearchBoxFade
   onScroll searchResults $ resetSearchBoxFade
 
-  let updateSearch :: Aff Unit
-      updateSearch = filterNodes >>= \(resultsJson /\ pattern) ->
+  let updateSearch :: Boolean -> Aff Unit
+      updateSearch render = filterNodes >>= \(resultsJson /\ pattern) ->
         case Argonaut.decodeJson resultsJson of
-          Right results -> liftEffect $ renderResults results pattern
           Left err -> error $ "unexpected find results json: " <> show err
+          Right results -> liftEffect do
+            let total = results.resultTotalNodes
+            void $ Ref.modify (max total) nodeCountMaxRef
+            updateNodeCount (if render then "found" else "") total
+            when render $ renderResults results pattern
+  launchAff $ updateSearch false
 
-      onPatternInputEvent = onElementEvent patternInput
-
+  let onPatternInputEvent = onElementEvent patternInput
   for_ [ EventTypes.change, EventTypes.focus, EventTypes.input ] $
     flip onPatternInputEvent $ const do
       addClass searchBox "Expanded"
-      launchAff updateSearch
+      launchAff $ updateSearch true
       resetSearchBoxFade
 
   let collapseSearch :: Effect Unit
@@ -664,48 +679,61 @@ formatNodeType nodeType
       Nothing -> ""
     regex = Regex.unsafeRegex "[_]+" Regex.noFlags
 
-createTray :: Channel RenderState -> Effect Element
-createTray renderState = do
+createTray :: NodeConfiguration -> Channel RenderState -> Effect Element
+createTray nodeConfiguration renderState = do
   tray <- createElement "div" "Tray" Nothing
+  let clear = removeAllChildren tray
+      
+      replaceDiv className populate = clear *> do
+        div <- createElement "div" "" $ Just tray
+        void $ Timer.setTimeout 100 $ addClass div className
+        populate div
 
-  let createIcon content tooltip parent = do
+      createIcon content tooltip parent = do
         icon <- createElement "span" "Icon" $ Just parent
         Element.setAttribute "title" tooltip icon
         setTextContent content icon
         pure icon
 
-      withDiv className populate = do
-        removeAllChildren tray
-        div <- createElement "div" "" $ Just tray
-        void $ Timer.setTimeout 100 $ addClass div className
-        populate div
+  renderingCount <- Ref.new 0
+  let incrementRenderingCount = do
+        Ref.modify (_ + 1) renderingCount
+      whenQuiescent action = do
+        n <- Ref.modify (_ - 1) renderingCount
+        when (n == 0) action
+
+  checkpointCandidate <- Ref.new Argonaut.jsonEmptyObject
+  let reload = Location.reload =<< Window.location =<< HTML.window
 
   Signal.runSignal $ Signal.subscribe renderState <#> case _ of
     RenderInit -> pure unit
 
-    Rendering visibleCount -> withDiv "Rendering" \div -> do
+    Rendering visibleCount -> replaceDiv "Rendering" \div -> do
       status <- createElement "span" "Status" $ Just div
       setTextContent ("Rendering " <> show visibleCount <> " nodes") status
       icon <- createIcon "⏳" "Interrupt" div
       listener <- EventTarget.eventListener \event ->
         for_ (MouseEvent.fromEvent event) \mouseEvent ->
-          when (MouseEvent.button mouseEvent == 0) do
-            Console.log "INTERRUPT!"
+          when (MouseEvent.button mouseEvent == 0) reload
       EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget icon
+      incrementRenderingCount <#> (_ > 1) >>= if _ then pure unit else
+        flip Ref.write checkpointCandidate =<< nodeConfiguration.get
 
-    RenderDone (Milliseconds elapsed) -> withDiv "RenderDone" \div -> do
+    RenderDone (Milliseconds elapsed) -> whenQuiescent $ replaceDiv "RenderDone" \div -> do
       status <- createElement "span" "Status" $ Just div
       setTextContent (fromRight "" $ formatNumber "0,0" elapsed <#> (_ <> "ms")) status
       saveLink <- createElement "a" "Save" $ Just div
       void $ createIcon "💾" "Save image" saveLink
+      setCheckpoint =<< Ref.read checkpointCandidate
       updateSaveLink
 
-    RenderFail statusCode -> withDiv "RenderFail" \div -> do
+    RenderFail statusCode -> whenQuiescent $ replaceDiv "RenderFail" \div -> do
       status <- createElement "span" "Status" $ Just div
       let content = case statusCode of
             Nothing -> "Request failed"
             Just (StatusCode code) -> "Rendering failed: " <> show code
       setTextContent content status
+      
 
   pure tray
 
@@ -721,15 +749,18 @@ makeThrottledAction action = do
 
 launchAff :: Aff Unit -> Effect Unit
 launchAff = Aff.runAff_ $ case _ of
-  Left err -> logError $ show err
+  Left err -> void $ logError $ show err
   _ -> pure unit
 
-logError :: String -> Effect Unit
-logError s = when (shouldShow s) (Console.error s)
+logError :: String -> Effect Boolean
+logError err = do
+  let shown = shouldShow err
+  --when shown (Console.error err)
+  pure shown
   where
-    contains err = flip String.contains (show err) <<< Pattern
-    shouldShow err = not $ Array.any (contains err)
+    shouldShow s = not $ Array.any (contains s)
       [ "action superseded", "pattern unchanged" ]
+    contains s = flip String.contains (show s) <<< Pattern
 
 error :: forall m a. MonadThrow Error m => String -> m a
 error = throwError <<< Exception.error
@@ -813,6 +844,10 @@ foreign import pushHistory :: Json -> Effect Unit
 foreign import onPopHistory :: (Json -> Effect Unit) -> Effect Unit
 
 foreign import updateSaveLink :: Effect Unit
+
+foreign import setCheckpoint :: Json -> Effect Unit
+
+foreign import getCheckpoint :: Effect Json
 
 undefined :: forall a. a
 undefined = unsafeCoerce unit

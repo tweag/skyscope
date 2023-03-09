@@ -10,7 +10,6 @@ module Render where
 import Common
 import Control.Arrow ((&&&))
 import Control.Category ((>>>))
-import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM.TVar (TVar)
 import Control.Monad (guard)
 import Control.Monad.IO.Class (MonadIO (..))
@@ -55,7 +54,6 @@ renderGraph ::
   Memoize r RenderResult
 renderGraph database nodeStates = do
   -- TODO: memoize rendered svgs
-  --liftIO $ threadDelay 1800000
 
   let selectEdges :: NodeHash -> Text -> IO [[SQLData]]
       selectEdges nodeHash whereClause =
