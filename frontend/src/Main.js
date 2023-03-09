@@ -55,13 +55,16 @@ export function onPopHistory(action) {
 
 // foreign import updateSaveLink :: Effect Unit
 export function updateSaveLink() {
-    const link = document.getElementById("save");
+    const link = document.getElementById("Save");
     const existingUrl = link.getAttribute("href");
     if (existingUrl) {
         URL.revokeObjectURL(existingUrl);
     }
-    const svg = document.getElementById("graph").firstChild.cloneNode(true);
-    Array.from(svg.getElementsByClassName("animation")).forEach(animation => animation.parentNode.removeChild(animation));
+    const svg = document.getElementById("Graph").firstChild.cloneNode(true);
+    if (!svg) {
+        return;
+    }
+    Array.from(svg.getElementsByClassName("Animation")).forEach(animation => animation.parentNode.removeChild(animation));
     Array.from(svg.getElementsByClassName("Changed")).forEach(element => element.classList.remove("Changed"));
     Array.from(svg.getElementsByTagName("a")).forEach(a => a.removeAttribute("xlink:title"));
     Array.from(svg.getElementsByTagName("title")).forEach(title => title.parentNode.removeChild(title));

@@ -68,13 +68,13 @@ div#SearchBoxOverlay {
 }
 
 div#SearchBox {
-    background-color: hsl(197, 17%, 92%);
+    background-color: hsla(197, 17%, 92%, 90%);
     border-radius: 20px;
     border: 1px solid hsl(197, 23%, 40%);
     display: flex;
     flex-direction: column;
-    margin: 30px 80px;
-    opacity: 95%;
+    margin: 30px 60px 60px;
+    /*opacity: 95%;*/
     overflow: hidden;
     pointer-events: auto;
 }
@@ -265,20 +265,100 @@ g.edge.Animate path, g.edge:hover path {
     }
 }
 
-a#save {
-    bottom: 16px;
-    height: 48px;
-    opacity: 80%;
-    position: fixed;
-    right: 16px;
-    width: 48px;
+div#Trade.Hidden {
+    opacity: 0%;
 }
 
-a#save button {
-    background-color: hsl(197, 29%, 90%);
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 32px;
-    height: 100%;
-    width: 100%;
+div#Tray {
+    align-items: center;
+    border-radius: 10px;
+    bottom: 8px;
+    display: flex;
+    justify-content: center;
+    opacity: 90%;
+    padding: 4px;
+    position: fixed;
+    right: 8px;
+
 }
+
+div#Tray div {
+    color: hsl(0, 0%, 25%);
+    opacity: 0%;
+    transition: opacity 1000ms ease;
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+div#Tray div.Rendering {
+    opacity: 90%;
+}
+
+div#Tray div.RenderDone {
+    opacity: 90%;
+}
+
+div#Tray div.RenderFail {
+    color: hsl(0, 86%, 37%);
+    background-color: hsla(3, 81%, 48%, 10%);
+    border: 1px solid hsl(0, 55.9%, 40%);
+    opacity: 90%;
+}
+
+span#Status {
+    cursor: default;
+    font-size: 16px;
+    font-style: italic;
+    user-select: none;
+    margin: 0px 8px;
+}
+
+div.RenderDone span#Status {
+    color: hsl(0, 0%, 50%);
+}
+
+a#Save {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+span#Icon {
+    font-size: 24px;
+}
+
+div.Rendering span#Icon {
+    animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+      0% { transform: rotate(  0deg); }
+     35% { transform: rotate(  0deg); }
+     40% { transform: rotate( 10deg); }
+     50% { transform: rotate(180deg); }
+     60% { transform: rotate(350deg); }
+     65% { transform: rotate(360deg); }
+    100% { transform: rotate(360deg); }
+}
+
+
+
+
+
+a#save {
+    align-items: center;
+    border: 1px red solid;
+    bottom: 8px;
+    display: flex;
+    height: 32px;
+    justify-content: center;
+    opacity: 80%;
+    position: fixed;
+    right: 8px;
+    text-decoration: none;
+    width: 32px;
+}
+

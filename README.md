@@ -71,3 +71,4 @@ When this happens you can crop the graph to a smaller selection of nodes:
 To do this, press and hold the shift key while you make your selection.
 Upon releasing the shift key, the graph will be updated and only the selected nodes will be visible.
 You can also hide individual nodes by ctrl clicking.
+
