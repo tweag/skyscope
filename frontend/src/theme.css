@@ -205,7 +205,7 @@ g.node path {
     transition: fill 500ms ease-in-out;
 }
 
-g.node.Changed path, g.node.Collapsed.Changed path {
+g.node.Highlight path, g.node.Collapsed.Highlight path {
     fill: hsl(49, 100%, 79%);
 }
 
@@ -324,6 +324,7 @@ a#Save {
     display: flex;
     justify-content: center;
     align-items: center;
+    text-decoration: none;
 }
 
 span#Icon {
