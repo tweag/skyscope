@@ -16,7 +16,6 @@
   , "foldable-traversable"
   , "foreign-object"
   , "formatters"
-  , "integers"
   , "js-timers"
   , "maybe"
   , "now"

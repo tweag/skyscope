@@ -100,7 +100,7 @@ renderGraph database nodeStates = do
 
   let graph =
         Text.unlines
-          [ "digraph {",
+          [ "digraph \"\" {",
             "    pad=2",
             "    node"
               <> graphvizAttributes

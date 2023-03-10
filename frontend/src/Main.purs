@@ -8,7 +8,7 @@ import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Argonaut (jsonEmptyObject) as Argonaut
 import Data.Argonaut.Core (Json)
-import Data.Argonaut.Core (fromArray, fromString, toArray, toString) as Argonaut
+import Data.Argonaut.Core (fromArray, fromString, isNull, toArray, toString) as Argonaut
 import Data.Argonaut.Decode (decodeJson) as Argonaut
 import Data.Argonaut.Decode.Class (class DecodeJson)
 import Data.Argonaut.Decode.Error (JsonDecodeError(..)) as Argonaut
@@ -87,7 +87,7 @@ load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
   Nothing -> error "html <body> element not found"
   Just bodyElement -> do
     nodeConfiguration <- makeNodeConfiguration
-    nodeConfiguration.set =<< getCheckpoint
+    restore nodeConfiguration
     let body = HTMLElement.toElement bodyElement
     graph <- createElement "div" "Graph" $ Just body
     nodeClickHandler <- makeTools graph nodeConfiguration
@@ -97,6 +97,12 @@ load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
     tray <- createTray nodeConfiguration renderState
     appendElement tray body
     focusInput
+
+restore :: NodeConfiguration -> Effect Unit
+restore nodeConfiguration = do
+  checkpoint <- getCheckpoint
+  when (not $ Argonaut.isNull checkpoint) do
+    nodeConfiguration.set checkpoint
 
 type NodeHash = String
 
@@ -307,6 +313,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
             handled <- onClick click event
             if handled then pure unit else case click of
               NodeClick element -> do
+                addClass element "Highlight"
                 hash <- Element.id element
                 if MouseEvent.ctrlKey event
                   then nodeConfiguration.hide hash
@@ -319,11 +326,11 @@ attachGraphRenderer graph nodeConfiguration onClick = do
           for_ changedNodeHash $ getElementById >=> case _ of
             Nothing -> error "can't find changed node"
             Just element -> do
-              addClass element "Changed"
+              addClass element "Highlight"
               void $ Timer.setTimeout (2 * animationDuration) do
                 scrollIntoView element
                 void $ Timer.setTimeout animationDuration $
-                  removeClass element "Changed"
+                  removeClass element "Highlight"
 
   where
     makeRenderer :: Effect (Aff (Either StatusCode Element))
@@ -368,7 +375,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
             for_ (MouseEvent.fromEvent event) (handleClick $ PathClick edge)
           EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget edge
         animateFadeIn edge
-    
+
 
     animateNodeTranslation :: Element -> Effect Unit
     animateNodeTranslation newNode = do
@@ -537,7 +544,7 @@ createSearchBox nodeConfiguration = do
               then removeClass row "Selected"
               else addClass row "Selected"
             toggleSelected = visible >>= if _
-              then nodeConfiguration.show hash Expanded *> updateSelected
+              then nodeConfiguration.show hash Collapsed *> updateSelected
               else nodeConfiguration.hide hash *> updateSelected
             visible = Array.notElem hash <$> nodeConfiguration.visible
         listener <- EventTarget.eventListener $ const toggleSelected
@@ -683,7 +690,7 @@ createTray :: NodeConfiguration -> Channel RenderState -> Effect Element
 createTray nodeConfiguration renderState = do
   tray <- createElement "div" "Tray" Nothing
   let clear = removeAllChildren tray
-      
+
       replaceDiv className populate = clear *> do
         div <- createElement "div" "" $ Just tray
         void $ Timer.setTimeout 100 $ addClass div className
@@ -695,15 +702,14 @@ createTray nodeConfiguration renderState = do
         setTextContent content icon
         pure icon
 
+  checkpointCandidate <- Ref.new Argonaut.jsonEmptyObject
   renderingCount <- Ref.new 0
   let incrementRenderingCount = do
-        Ref.modify (_ + 1) renderingCount
+        n <- Ref.modify (_ + 1) renderingCount
+        when (n == 1) $ flip Ref.write checkpointCandidate =<< nodeConfiguration.get
       whenQuiescent action = do
         n <- Ref.modify (_ - 1) renderingCount
         when (n == 0) action
-
-  checkpointCandidate <- Ref.new Argonaut.jsonEmptyObject
-  let reload = Location.reload =<< Window.location =<< HTML.window
 
   Signal.runSignal $ Signal.subscribe renderState <#> case _ of
     RenderInit -> pure unit
@@ -714,10 +720,10 @@ createTray nodeConfiguration renderState = do
       icon <- createIcon "⏳" "Interrupt" div
       listener <- EventTarget.eventListener \event ->
         for_ (MouseEvent.fromEvent event) \mouseEvent ->
-          when (MouseEvent.button mouseEvent == 0) reload
+          when (MouseEvent.button mouseEvent == 0) do
+            Location.reload =<< Window.location =<< HTML.window
       EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget icon
-      incrementRenderingCount <#> (_ > 1) >>= if _ then pure unit else
-        flip Ref.write checkpointCandidate =<< nodeConfiguration.get
+      incrementRenderingCount
 
     RenderDone (Milliseconds elapsed) -> whenQuiescent $ replaceDiv "RenderDone" \div -> do
       status <- createElement "span" "Status" $ Just div
@@ -733,7 +739,7 @@ createTray nodeConfiguration renderState = do
             Nothing -> "Request failed"
             Just (StatusCode code) -> "Rendering failed: " <> show code
       setTextContent content status
-      
+
 
   pure tray
 

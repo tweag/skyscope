@@ -89,5 +89,5 @@ export function setCheckpoint(state) {
 
 // foreign import getCheckpoint :: Effect Json
 export function getCheckpoint() {
-    return JSON.parse(window.localStorage.getItem(importId));
+    return JSON.parse(window.localStorage.getItem(importId) ?? "null");
 }
