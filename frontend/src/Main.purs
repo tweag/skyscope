@@ -137,7 +137,7 @@ makeNodeConfiguration = do
   let notify = Signal.send channel
       onChange action = Signal.runSignal $ action <$> Signal.subscribe channel
       show hash state = modify true (Just hash) (Object.insert hash state)
-      hide hash = modify true Nothing (Object.delete hash)
+      hide hash = modify true (Just hash) (Object.delete hash)
       visible = Object.keys <$> Ref.read nodeStates
       set json = case Argonaut.decodeJson json of
         Right s -> Ref.write s nodeStates *> notify Nothing
@@ -323,14 +323,12 @@ attachGraphRenderer graph nodeConfiguration onClick = do
               _ -> pure unit
           removeAllChildren graph
           appendElement svg graph
-          for_ changedNodeHash $ getElementById >=> case _ of
-            Nothing -> error "can't find changed node"
-            Just element -> do
-              addClass element "Highlight"
-              void $ Timer.setTimeout (2 * animationDuration) do
-                scrollIntoView element
-                void $ Timer.setTimeout animationDuration $
-                  removeClass element "Highlight"
+          for_ changedNodeHash $ getElementById >=> traverse \element -> do
+            addClass element "Highlight"
+            void $ Timer.setTimeout (2 * animationDuration) do
+              scrollIntoView element
+              void $ Timer.setTimeout animationDuration $
+                removeClass element "Highlight"
 
   where
     makeRenderer :: Effect (Aff (Either StatusCode Element))

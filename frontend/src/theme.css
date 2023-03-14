@@ -205,7 +205,7 @@ g.node path {
     transition: fill 500ms ease-in-out;
 }
 
-g.node.Highlight path, g.node.Collapsed.Highlight path {
+g.node.Highlight path, g.node.Highlight ellipse, g.node.Collapsed.Highlight path {
     fill: hsl(49, 100%, 79%);
 }
 
