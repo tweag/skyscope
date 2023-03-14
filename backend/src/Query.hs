@@ -20,10 +20,9 @@ import Data.HList.Record (HasField, hLookupByLabel)
 import Data.Int (Int64)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (catMaybes)
 import Data.Set (Set)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData (..))
 import Foreign.C.Types (CInt (..), CLong (..))
@@ -170,7 +169,7 @@ filterNodes database limit = memoize "filterNodes" getFilterNodesMemo $ \pattern
       records <&> \[SQLText hash, SQLText nodeData, SQLText nodeType] ->
         (hash, Node nodeData nodeType)
 
-type GetContextMemo = TVar (Map [Text] [Context])
+type GetContextMemo = TVar (Map [Text] (Map Text Text))
 
 type HasGetContextMemo r = HasField "getContext" r GetContextMemo
 
@@ -178,13 +177,15 @@ getContextMemo :: HasGetContextMemo r => r -> GetContextMemo
 getContextMemo = hLookupByLabel (Label :: Label "getContext")
 
 getContext ::
-  HasGetContextMemo r => Database -> [Text] -> Memoize r [Context]
+  HasGetContextMemo r => Database -> [Text] -> Memoize r (Map Text Text)
 getContext database = memoize "getContext" getContextMemo $
-  traverse $ \key ->
-    let coerceMaybe = fromMaybe $ error $ "failed to get context data for key: " <> Text.unpack key
-     in liftIO $
-          Context key . coerceMaybe . Sqlite.fromSQLText
-            <$> Sqlite.executeSqlScalar
-              database
-              ["SELECT context_data FROM context WHERE node_key = ?;"]
-              [SQLText key]
+  fmap (fmap (Map.fromList . catMaybes)) $
+    traverse $ \key ->
+      liftIO $
+        Sqlite.executeSql
+          database
+          ["SELECT context_data FROM context WHERE context_key LIKE ?;"]
+          [SQLText key]
+          <&> \case
+            [[SQLText contextData]] -> Just (key, contextData)
+            _ -> Nothing

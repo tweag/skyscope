@@ -8,7 +8,7 @@ import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Argonaut (jsonEmptyObject) as Argonaut
 import Data.Argonaut.Core (Json)
-import Data.Argonaut.Core (fromArray, fromString, isNull, toArray, toString) as Argonaut
+import Data.Argonaut.Core (fromArray, fromString, isNull, toArray, toObject, toString) as Argonaut
 import Data.Argonaut.Decode (decodeJson) as Argonaut
 import Data.Argonaut.Decode.Class (class DecodeJson)
 import Data.Argonaut.Decode.Error (JsonDecodeError(..)) as Argonaut
@@ -198,7 +198,7 @@ makeTools graph nodeConfiguration = do
       let openAllPaths = nodeConfiguration.atomically $ Nothing <$ do
             liftEffect pathElements >>= traverse openPath
           updateDOM = pathElements >>= traverse \element ->
-            Ref.read active >>= if _
+            Ref.read active >>= if _  -- TODO: Fix bug where animation gets stuck-on when browser loses focus with shift held
               then addClass element "Animate"
               else removeClass element "Animate"
       onKeyDown "Shift" $ Ref.write true active <* updateDOM
@@ -323,7 +323,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
       liftEffect do
         visibleCount <- Array.length <$> nodeConfiguration.visible
         notify $ Rendering visibleCount
-      render >>= liftEffect <<< case _ of
+      render >>= case _ of
         Left statusCode -> pure $ Left statusCode
         Right svg -> Right unit <$ do
           decorateGraph svg \click event -> do
@@ -338,14 +338,15 @@ attachGraphRenderer graph nodeConfiguration onClick = do
                     then nodeConfiguration.show hash Expanded
                     else nodeConfiguration.show hash Collapsed
               _ -> pure unit
-          removeAllChildren graph
-          appendElement svg graph
-          for_ changed $ getElementById >=> traverse \element -> do
-            addClass element "Highlight"
-            void $ Timer.setTimeout (2 * animationDuration) do
-              scrollIntoView element
-              void $ Timer.setTimeout animationDuration $
-                removeClass element "Highlight"
+          liftEffect do
+            removeAllChildren graph
+            appendElement svg graph
+            for_ changed $ getElementById >=> traverse \element -> do
+              addClass element "Highlight"
+              void $ Timer.setTimeout (2 * animationDuration) do
+                scrollIntoView element
+                void $ Timer.setTimeout animationDuration $
+                  removeClass element "Highlight"
 
   where
     makeRenderer :: Effect (Aff (Either StatusCode Element))
@@ -361,62 +362,95 @@ attachGraphRenderer graph nodeConfiguration onClick = do
             maybe (error "svg element not found") (pure <<< Right) svg
           status -> pure $ Left status
 
-    decorateGraph :: Element -> ClickHandler Unit -> Effect Unit
+    --fetchNodeContext :: Effect Unit
+    --fetchNodeContext = undefined
+
+    decorateGraph :: Element -> ClickHandler Unit -> Aff Unit
     decorateGraph svg handleClick = do
-      getElementsByClassName "node" svg >>= traverse_ \node -> do
-        listener <- EventTarget.eventListener \event ->
-          for_ (MouseEvent.fromEvent event) (handleClick $ NodeClick node)
-        EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget node
-        nodeHash <- Element.id node
-        deconstructNodeElement node >>= case _ of
-          Just (VisibleNode visibleNode) -> do
-            addClass visibleNode.background "Selectable"
-            nodeType <- formatNodeType <$> textContent visibleNode.nodeType
-            addClass node nodeType
-            addClass visibleNode.nodeType "NodeType"
-            nodeLabel <- textContent visibleNode.nodeLabel
-
-            -- TODO: Fetch context and pass it to formatNode
-
-            formatResult <- formatNode $ Object.fromFoldable
-                  [ "hash" /\ nodeHash
-                  , "type" /\ nodeType
-                  , "label" /\ nodeLabel
-                  , "context" /\ ""
-                  ]
-            let getFormatted field = Object.lookup field formatResult
-                  # fromMaybe ("<missing " <> field <> ">")
-            setTextContent (getFormatted "type") visibleNode.nodeType
-            let maxChars = 40
-                label = getFormatted "label"
-                ellipsis = if String.length label > maxChars then "…" else ""
-                labelContent = ellipsis <> String.takeRight maxChars label
-            setTextContent labelContent visibleNode.nodeLabel
-            addClass visibleNode.nodeLabel "NodeLabel"
-            pure unit
-          _ -> pure unit
-        animateNodeTranslation node
-      getElementsByClassName "edge" svg >>= traverse_ \edge -> do
+      liftEffect $ getElementsByClassName "edge" svg >>= traverse_ \edge -> do
         containsClass edge "Path" >>= not >>> if _ then pure unit else do
           listener <- EventTarget.eventListener \event ->
             for_ (MouseEvent.fromEvent event) (handleClick $ PathClick edge)
           EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget edge
         animateFadeIn edge
 
-        {-
+      contents <- liftEffect $ map Array.catMaybes $ getElementsByClassName "node" svg >>= traverse \node -> do
+        listener <- EventTarget.eventListener \event ->
+          for_ (MouseEvent.fromEvent event) (handleClick $ NodeClick node)
+        EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget node
+        animateNodeTranslation node
+        toNodeElement node >>= case _ of
+          Just { anchor, background, text } -> do
+            Element.getAttribute "xlink:title" anchor >>= case _ of
+              Just nodeData -> do
+                let label = join $ Regex.match labelRegex nodeData <#> Array.NonEmpty.head
+                    labelRegex = Regex.unsafeRegex "(@\\w+)?//(/?[^/:,}]+)*(:[^/,}]+(/[^/,}]+)*)?" Regex.noFlags
+                pure unit
+                addClass background "Selectable"
+                case text of
+                  Just { title, detail } -> do
+                    let setDetail content = do
+                          let maxChars = 40
+                              ellipsis = if String.length content > maxChars then "…" else ""
+                          setTextContent (ellipsis <> String.takeRight maxChars content) detail
+                        setTitle = flip setTextContent title
+                        setTooltip = flip (Element.setAttribute "xlink:title") anchor
+                    setDetail =<< flip fromMaybe label <$> textContent detail
+                    nodeType <- formatNodeType <$> textContent title
+                    setTitle nodeType
+                    setTooltip nodeData
+                    addClass node nodeType
+                    addClass title "NodeTitle"
+                    addClass detail "NodeDetail"
+                    let contextKey = case nodeType of
+                          "ConfiguredTarget" -> label
+                          "ActionExecution" ->
+                            let regex = Regex.unsafeRegex "(?<=actionIndex=)[0-9]+" Regex.noFlags
+                            in case join $ Regex.match regex nodeData <#> Array.NonEmpty.head of
+                                Just actionIndex -> label <#> (_ <> (" " <> actionIndex))
+                                Nothing -> Nothing
+                          _ -> Nothing
+                    pure $ Just { node, nodeType, nodeData, label, contextKey, setDetail, setTitle, setTooltip }
+                  Nothing -> pure Nothing
+              Nothing -> pure Nothing
+          _ -> pure Nothing
+
+      let contextKeys = Array.mapMaybe _.contextKey contents
+      withContext contextKeys \context -> for_ contents \nodeContent -> liftEffect do
+        let contextData = flip Object.lookup context =<< nodeContent.contextKey
+        formattedContent <- formatNodeContent $ Object.fromFoldable
+          [ "type" /\ nodeContent.nodeType
+          , "data" /\ nodeContent.nodeData
+          , "label" /\ fromMaybe "" nodeContent.label
+          , "context" /\ fromMaybe "" contextData
+          ]
+        let traverseFormatted field f =
+              for_ (Object.lookup field formattedContent) \content ->
+                if content == "" then pure unit else f content
+        traverseFormatted "title" nodeContent.setTitle
+        traverseFormatted "detail" nodeContent.setDetail
+        traverseFormatted "tooltip" nodeContent.setTooltip
+        pure unit
+
+    withContext :: Array String -> (Object String -> Aff Unit) -> Aff Unit
+    withContext labels action = do
+      url <- liftEffect $ getImportId <#> (_ <> "/context")
       result <- Affjax.post Affjax.ResponseFormat.json url
-        $ Just $ Affjax.RequestBody.json $ Argonaut.fromString
-        $ "%" <> pattern <> "%"
-        -}
+        $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray $ Argonaut.fromString <$> labels
+      case result of
+        Left err -> error $ Affjax.printError err
+        Right response -> case join $ Argonaut.toObject response.body <#> traverse Argonaut.toString of
+          Nothing -> error "unexpected context results json"
+          Just context -> action context
 
     animateNodeTranslation :: Element -> Effect Unit
     animateNodeTranslation newNode = do
        let attr :: String -> Element -> MaybeT Effect Number
            attr name elem = MaybeT $ (Number.fromString =<< _) <$> Element.getAttribute name elem
            centerOf :: Element -> MaybeT Effect (Number /\ Number)
-           centerOf = deconstructNodeElement >>> liftEffect >=> case _ of
-             Just (VisibleNode vn) -> Tuple <$> attr "x" vn.nodeType <*> attr "y" vn.nodeType
-             Just (HiddenNode hn) -> Tuple <$> attr "cx" hn.background <*> attr "cy" hn.background
+           centerOf = toNodeElement >>> liftEffect >=> case _ of
+             Just { text: Just { title } } -> Tuple <$> attr "x" title <*> attr "y" title
+             Just { text: Nothing, background } -> Tuple <$> attr "cx" background <*> attr "cy" background
              Nothing -> error "failed to deconstruct node element"
        hash <- Element.id newNode
        getElementById hash >>= case _ of
@@ -451,20 +485,50 @@ attachGraphRenderer graph nodeConfiguration onClick = do
     animationDuration :: Int
     animationDuration = 200
 
-data NodeElement
-  = HiddenNode { background :: Element }
-  | VisibleNode { nodeType :: Element, nodeLabel :: Element, background :: Element }
+type NodeElement =
+  { anchor :: Element
+  , background :: Element
+  , text :: Maybe
+    { title :: Element
+    , detail :: Element
+    }
+  }
 
-deconstructNodeElement :: Element -> Effect (Maybe NodeElement)
-deconstructNodeElement node = do
+toNodeElement :: Element -> Effect (Maybe NodeElement)
+toNodeElement node = do
   paths <- getElementsByTagName "path" node
   texts <- getElementsByTagName "text" node
   ellipses <- getElementsByTagName "ellipse" node
-  case paths /\ texts /\ ellipses of
-    [ background ] /\ [ nodeType, nodeLabel ] /\ _ ->
-      pure $ Just $ VisibleNode { nodeType, nodeLabel, background }
-    _ /\ _ /\ [ background ] -> pure $ Just $ HiddenNode { background }
+  anchors <- getElementsByTagName "a" node
+  case paths /\ texts /\ ellipses /\ anchors of
+    [ background ] /\ [ title, detail ] /\ _ /\ [ anchor ] ->
+      pure $ Just { anchor, background, text: Just { title, detail } }
+    _ /\ _ /\ [ background ] /\ [ anchor ] ->
+      pure $ Just { anchor, background, text: Nothing }
     _ -> pure Nothing
+
+
+
+
+
+
+{-
+data NodeElement_
+  = HiddenNode { nodeAnchor :: Element, background :: Element }
+  | VisibleNode { nodeType :: Element, nodeLabel :: Element, nodeAnchor :: Element, background :: Element }
+
+deconstructNodeElement_ :: Element -> Effect (Maybe NodeElement_)
+deconstructNodeElement_ node = do
+  paths <- getElementsByTagName "path" node
+  texts <- getElementsByTagName "text" node
+  ellipses <- getElementsByTagName "ellipse" node
+  anchors <- getElementsByTagName "a" node
+  case paths /\ texts /\ ellipses /\ anchors of
+    [ background ] /\ [ nodeType, nodeLabel ] /\ _ /\ [ nodeAnchor ] ->
+      pure $ Just $ VisibleNode { nodeType, nodeLabel, nodeAnchor, background }
+    _ /\ _ /\ [ background ] /\ [ nodeAnchor ] -> pure $ Just $ HiddenNode { nodeAnchor, background }
+    _ -> pure Nothing
+    -}
 
 data EdgeElement
   = PathElement { label :: Element }
@@ -475,9 +539,10 @@ deconstructEdgeElement edge = getElementsByTagName "text" edge <#> case _ of
   _ -> Nothing
 
 type NodeFields =
-  { type :: String
-  , label :: String
-  , context :: String
+  { nodeType :: String
+  , nodeBody :: String
+  , nodeTooltip :: String
+  , nodeContext :: String
   }
 
 {-
@@ -543,14 +608,14 @@ createSearchBox nodeConfiguration = do
         listener <- EventTarget.eventListener $ const toggleSelected
         EventTarget.addEventListener EventTypes.click
           listener false $ Element.toEventTarget row
-        let prettyNodeType = formatNodeType node.nodeType
-        addClass row prettyNodeType
+        let formattedNodeType = formatNodeType node.nodeType
+        addClass row formattedNodeType
         addClass row "ResultRow"
-        setTitle node.nodeData row
+        for_ (HTMLElement.fromElement row) (HTMLElement.setTitle node.nodeData)
         updateSelected
         typeSpan <- createElement "span" "" $ Just row
-        setTextContent prettyNodeType typeSpan
-        addClass typeSpan "NodeType"
+        setTextContent formattedNodeType typeSpan
+        addClass typeSpan "NodeTitle"
         renderPatternMatch row pattern node.nodeData
 
       renderPatternMatch :: Element -> String -> String -> Effect Unit
@@ -788,11 +853,6 @@ setTextContent content element
 textContent :: Element -> Effect String
 textContent = Node.textContent <<< Element.toNode
 
-setTitle :: String -> Element -> Effect Unit
-setTitle title element = for_
-  (HTMLElement.fromElement element)
-  (HTMLElement.setTitle title)
-
 addClass :: Element -> String -> Effect Unit
 addClass element className = do
   classList <- Element.classList element
@@ -845,7 +905,7 @@ foreign import setCheckpoint :: Json -> Effect Unit
 
 foreign import getCheckpoint :: Effect Json
 
-foreign import formatNode :: Object String -> Effect (Object String)
+foreign import formatNodeContent :: Object String -> Effect (Object String)
 
 undefined :: forall a. a
 undefined = unsafeCoerce unit
