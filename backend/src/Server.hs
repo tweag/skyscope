@@ -211,11 +211,34 @@ server port = withImportDb $ \importDatabase -> do
             Just result -> pure result
         Nothing -> error "invalid import id"
 
-    themeCss :: IO Text
-    themeCss =
-      getSkyscopeEnv "THEME_CSS" >>= \case
-        Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
-        Just path -> Text.readFile path
+    mainJs :: Text -> Text -> IO Text
+    mainJs importId importTag = do
+      formatJs <- liftIO formatJs
+      let scriptHeader =
+            Text.unlines
+              [ "const importId = '" <> importId <> "';",
+                "const importTag = '" <> importTag <> "';",
+                formatJs
+              ]
+      fmap (scriptHeader <>) $
+        getSkyscopeEnv "MAIN_JS" >>= \case
+          Nothing ->
+            pure $
+              Text.decodeUtf8 $
+                fromMaybe
+                  ""
+                  $( embedFileIfExists
+                       $( do
+                            found <- TH.runIO $ find (pure True) (filePath ~~? "**/frontend/main.js") "."
+                            pure $
+                              TH.LitE $
+                                TH.StringL $ case found of
+                                  [path] -> path
+                                  [] -> ""
+                                  _ -> error "unexpectedly found multiple main.js files"
+                        )
+                   )
+          Just path -> Text.readFile path
 
     indexJs :: IO Text
     indexJs =
@@ -223,32 +246,18 @@ server port = withImportDb $ \importDatabase -> do
         Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/index.js")
         Just path -> Text.readFile path
 
-    mainJs :: Text -> Text -> IO Text
-    mainJs importId importTag =
-      let scriptHeader =
-            Text.unlines
-              [ "const importId = '" <> importId <> "';",
-                "const importTag = '" <> importTag <> "';"
-              ]
-       in fmap (scriptHeader <>) $
-            getSkyscopeEnv "MAIN_JS" >>= \case
-              Nothing ->
-                pure $
-                  Text.decodeUtf8 $
-                    fromMaybe
-                      ""
-                      $( embedFileIfExists
-                           $( do
-                                found <- TH.runIO $ find (pure True) (filePath ~~? "**/frontend/main.js") "."
-                                pure $
-                                  TH.LitE $
-                                    TH.StringL $ case found of
-                                      [path] -> path
-                                      [] -> ""
-                                      _ -> error "unexpectedly found multiple main.js files"
-                            )
-                       )
-              Just path -> Text.readFile path
+    formatJs :: IO Text
+    formatJs = do
+      functionBody <- getSkyscopeEnv "FORMAT_JS" >>= \case
+        Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/format.js")
+        Just path -> Text.readFile path
+      pure $ "function _formatNode(node) { " <> functionBody <> " };"
+
+    themeCss :: IO Text
+    themeCss =
+      getSkyscopeEnv "THEME_CSS" >>= \case
+        Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
+        Just path -> Text.readFile path
 
     badRequest :: String -> ActionM a
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack

@@ -80,14 +80,21 @@ export function updateSaveLink() {
     link.setAttribute("download", filename);
 }
 
-// foreign import setCheckpoint :: Json -> Effect Unit
+// setCheckpoint :: Json -> Effect Unit
 export function setCheckpoint(state) {
-    return function() {
+    return function () {
         window.localStorage.setItem(importId, JSON.stringify(state));
     }
 }
 
-// foreign import getCheckpoint :: Effect Json
+// getCheckpoint :: Effect Json
 export function getCheckpoint() {
     return JSON.parse(window.localStorage.getItem(importId) ?? "null");
+}
+
+// formatNode :: Object String -> Effect (Object String)
+export function formatNode(node) {
+    return function () {
+        return _formatNode(node);
+    }
 }
