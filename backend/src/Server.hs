@@ -88,11 +88,13 @@ server port = withImportDb $ \importDatabase -> do
         findPathMemo <- newTVar Map.empty
         floodNodesMemo <- newTVar Map.empty
         filterNodesMemo <- newTVar Map.empty
+        getContextMemo <- newTVar Map.empty
         unifyComponentsMemo <- newTVar Map.empty
         pure $
           ((Label :: Label "findPath") .=. findPathMemo)
             .*. ((Label :: Label "floodNodes") .=. floodNodesMemo)
             .*. ((Label :: Label "filterNodes") .=. filterNodesMemo)
+            .*. ((Label :: Label "getContext") .=. getContextMemo)
             .*. ((Label :: Label "unifyComponents") .=. unifyComponentsMemo)
             .*. emptyRecord
       withMemo id action = liftIO $ runReaderT action =<< getMemo id
@@ -156,50 +158,55 @@ server port = withImportDb $ \importDatabase -> do
               "</div>"
             ]
 
-    Web.delete "/:id/" $
-      readMaybe <$> Web.param "id" >>= \case
-        Just id -> Web.json =<< liftIO (deleteImport importDatabase id)
-        Nothing -> badRequest "invalid id"
+    Web.delete "/:importId/" $
+      readMaybe <$> Web.param "importId" >>= \case
+        Just importId -> Web.json =<< liftIO (deleteImport importDatabase importId)
+        Nothing -> badRequest "invalid import id"
 
-    Web.get "/:id/" $ do
+    Web.get "/:importId/" $ do
       Import {..} <- importRoute importDatabase $ const . pure
-      let id = Text.pack $ show importId
-      mainJs <- liftIO $ mainJs id importTag
+      let importIdText = Text.pack $ show importId
+      mainJs <- liftIO $ mainJs importIdText importTag
       html ("<script>" <> mainJs <> "</script>") ""
 
-    Web.post "/:id/path" $
+    Web.post "/:importId/path" $
       Json.eitherDecode <$> Web.body >>= \case
         Right (origin, destination) ->
           let route Import {..} database = withMemo importId $ Query.findPath database origin destination
            in Web.json =<< importRoute importDatabase route
         Left err -> badRequest err
 
-    Web.post "/:id/flood" $
+    Web.post "/:importId/flood" $
       Json.eitherDecode <$> Web.body >>= \case
         Right (source, pattern, types) ->
           let route Import {..} database = withMemo importId $ Query.floodNodes database 256 source pattern types
            in Web.json =<< importRoute importDatabase route
         Left err -> badRequest err
 
-    Web.post "/:id/filter" $
+    Web.post "/:importId/filter" $
       Json.eitherDecode <$> Web.body >>= \case
         Right pattern ->
           let route Import {..} database = withMemo importId $ Query.filterNodes database 256 pattern
            in Web.json =<< importRoute importDatabase route
         Left err -> badRequest err
 
-    Web.post "/:id/render" $
+    Web.post "/:importId/render" $
       Json.eitherDecode <$> Web.body >>= \case
         Right nodeStates ->
           let route Import {..} database = withMemo importId $ Render.renderOutput <$> Render.renderGraph database nodeStates
            in Web.text =<< importRoute importDatabase route <* Web.setHeader "Content-Type" "image/svg+xml"
         Left err -> badRequest err
+
+    Web.get "/:importId/context" $ do
+      nodeKey <- Web.param "node_key"
+      let route Import {..} database = withMemo importId $ Query.getContext database nodeKey
+      Web.json =<< importRoute importDatabase route
   where
     importRoute :: Database -> (Import -> Database -> IO a) -> ActionM a
     importRoute importDatabase action =
-      readMaybe <$> Web.param "id" >>= \case
-        Just id ->
-          liftIO (withImport importDatabase id action) >>= \case
+      readMaybe <$> Web.param "importId" >>= \case
+        Just importId ->
+          liftIO (withImport importDatabase importId action) >>= \case
             Nothing -> Web.raiseStatus notFound404 $ LazyText.pack "no such import"
             Just result -> pure result
         Nothing -> error "invalid import id"

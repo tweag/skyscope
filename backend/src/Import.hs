@@ -1,7 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Import where
 
@@ -21,11 +23,15 @@ import Data.Bifunctor (first, second)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
+import Data.FileEmbed (embedFile)
 import Data.Foldable (for_)
+import Data.Function ((&))
 import Data.Functor (void, (<&>))
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (uncons)
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
@@ -46,60 +52,39 @@ import qualified Sqlite
 import Prelude
 
 withDatabase :: String -> FilePath -> (Database -> IO a) -> IO a
-withDatabase label path action = timed label $ Sqlite.withDatabase path $ \database -> do
-  putStrLn label
-  createSchema database
-  Sqlite.executeStatements database
-    [ ["pragma mmap_size = 10737418240;"],
-      ["pragma journal_mode = WAL;"],
-      ["pragma synchronous = off;"]
-    ]
-  action database
+withDatabase label path action = timed label $
+  Sqlite.withDatabase path $ \database -> do
+    putStrLn label
+    createSchema database
+    Sqlite.executeStatements
+      database
+      [ ["pragma mmap_size = 10737418240;"],
+        ["pragma journal_mode = WAL;"],
+        ["pragma synchronous = off;"]
+      ]
+    action database
   where
     createSchema :: Database -> IO ()
-    createSchema database =
-      Sqlite.executeStatements
-        database
-        [ [ "CREATE TABLE IF NOT EXISTS node (",
-            "  idx INTEGER,",
-            "  hash TEXT,",
-            "  data TEXT,",
-            "  type TEXT,",
-            "  PRIMARY KEY (idx),",
-            "  UNIQUE (hash)",
-            ");"
-          ],
-          [ "CREATE TABLE IF NOT EXISTS edge (",
-            "  source INTEGER,",
-            "  target INTEGER,",
-            "  group_num INTEGER,",
-            "  PRIMARY KEY (source, target),",
-            "  FOREIGN KEY (source) REFERENCES node(idx),",
-            "  FOREIGN KEY (target) REFERENCES node(idx)",
-            ");"
-          ],
-          [ "CREATE TABLE IF NOT EXISTS path (",
-            "  destination INTEGER,",
-            "  steps BLOB,",
-            "  PRIMARY KEY (destination),",
-            "  FOREIGN KEY (destination) REFERENCES node(idx)",
-            ");"
-          ]
-        ]
+    createSchema database = do
+      let sql = Text.decodeUtf8 $(embedFile "backend/src/schema.sql")
+      Sqlite.executeStatements database $ Text.lines <$> Text.splitOn "\n\n" sql
+
+addContext :: Database -> [(Text, Text)] -> IO ()
+addContext database context = do
+  let records = context <&> \(k, v) -> [SQLText k, SQLText v]
+  Sqlite.batchInsert database "context" ["node_key", "context_data"] records
 
 importSkyframe :: FilePath -> IO ()
 importSkyframe path = withDatabase "importing skyframe" path $ \database -> do
   legacy <- getSkyscopeEnv "LEGACY_BAZEL"
   let parser =
         if isJust legacy
-          then graphParserLegacy
-          else graphParser
-
+          then skyframeParserLegacy
+          else skyframeParser
   (nodes, edges) <-
     Text.getContents <&> Parser.parseOnly parser >>= \case
       Left err -> error $ "failed to parse skyframe graph: " <> err
       Right graph -> pure graph
-
   let assignIndex node = gets (,node) <* modify (+ 1)
       indexedNodes = evalState (for nodes assignIndex) 1
       coerceMaybe = fromMaybe $ error "parser produced an edge with an unknown node"
@@ -108,59 +93,85 @@ importSkyframe path = withDatabase "importing skyframe" path $ \database -> do
           (sourceIndex, _) <- Map.lookup source indexedNodes
           (targetIndex, _) <- Map.lookup target indexedNodes
           pure (group, sourceIndex, targetIndex)
-
   Sqlite.batchInsert database "node" ["idx", "hash", "data", "type"] $
     Map.assocs indexedNodes <&> \(nodeHash, (nodeIdx, Node nodeData nodeType)) ->
       SQLInteger nodeIdx : (SQLText <$> [nodeHash, nodeType <> ":" <> nodeData, nodeType])
   Sqlite.batchInsert database "edge" ["group_num", "source", "target"] $
     indexedEdges <&> \(g, s, t) -> SQLInteger <$> [fromIntegral g, s, t]
-
   indexing <- indexPathsAsync database
   atomically $
     readTVar indexing >>= \case
       False -> pure ()
       True -> retry
 
-  where
-    indexPathsAsync :: Database -> IO (TVar Bool)
-    indexPathsAsync database = do
-      progress <- newTVarIO (0, 1)
-      indexStartTime <- Clock.getCurrentTime
-      void $ forkIO $ indexPaths database progress
-      indexing <- newTVarIO True
-      let showProgress = do
-            threadDelay 100_000
-            (done, total) <- readTVarIO progress
-            timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
-            let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
-                expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime :: Integer
-                ansi = if done < total then "37" else "32"
-            putStrLn $
-              "\x1b[1F\x1b[2K\x1b[" <> ansi <> "mindexed paths to "
-                <> show done
-                <> " nodes ("
-                <> show total
-                <> " total, "
-                <> show expectedTime
-                <> " seconds remaining)\x1b[0m"
-            if done < total
-              then showProgress
-              else do
-                putStrLn $ "  time taken = " <> show timeTaken <> " seconds"
-                atomically $ writeTVar indexing False
-      void $ forkIO showProgress
-      pure indexing
+indexPathsAsync :: Database -> IO (TVar Bool)
+indexPathsAsync database = do
+  progress <- newTVarIO (0, 1)
+  indexStartTime <- Clock.getCurrentTime
+  void $ forkIO $ indexPaths database progress
+  indexing <- newTVarIO True
+  let showProgress = do
+        threadDelay 100_000
+        (done, total) <- readTVarIO progress
+        timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
+        let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
+            expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime :: Integer
+            ansi = if done < total then "37" else "32"
+        putStrLn $
+          "\x1b[1F\x1b[2K\x1b[" <> ansi <> "mindexed paths to "
+            <> show done
+            <> " nodes ("
+            <> show total
+            <> " total, "
+            <> show expectedTime
+            <> " seconds remaining)\x1b[0m"
+        if done < total
+          then showProgress
+          else do
+            putStrLn $ "  time taken = " <> show timeTaken <> " seconds"
+            atomically $ writeTVar indexing False
+  void $ forkIO showProgress
+  pure indexing
 
--- $> Import.checkParserEquivalence
+importTargets :: FilePath -> IO ()
+importTargets path = withDatabase "importing targets" path $ \database -> do
+  workspace <- maybe "" Text.pack <$> getSkyscopeEnv "WORKSPACE"
+  let parseTarget text = (,text) $
+        case Text.stripPrefix ("# " <> workspace <> "/") text <&> Text.breakOn "/BUILD.bazel:" of
+          Nothing -> error $ "failed to parse target label:\n" <> Text.unpack text
+          Just (package, text) ->
+            findLine "  name = \"" text & Text.break (== '"') & fst & \name ->
+              "//" <> package <> ":" <> name
+  targets <- map parseTarget <$> getParagraphs
+  addContext database targets
 
-checkParserEquivalence :: IO ()
-checkParserEquivalence = do
-  let zeroEdges = second $ Set.map $ \(Edge _ s t) -> Edge 0 s t
-      resultLegacy = Parser.parseOnly graphParserLegacy skyframeExampleLegacy
-      result = Parser.parseOnly graphParser skyframeExample
-  if resultLegacy == (zeroEdges <$> result)
-    then pure ()
-    else error $ "parsers not equivalent"
+importActions :: FilePath -> IO ()
+importActions path = withDatabase "importing actions" path $ \database -> do
+  let parseAction paragraph = (findLine "  Target: " paragraph, paragraph)
+      indexedActions group = (0 :| [1 ..]) `NonEmpty.zip` (snd <$> group)
+  groups <-
+    NonEmpty.groupBy (\x y -> fst x == fst y)
+      . map parseAction
+      <$> getParagraphs
+  addContext database $
+    concat $
+      groups <&> \group@((label, _) :| _) ->
+        NonEmpty.toList $
+          indexedActions group <&> \(index, contextData) ->
+            let nodeKey = label <> " " <> Text.pack (show @Integer index)
+             in (nodeKey, contextData)
+
+getParagraphs :: IO [Text]
+getParagraphs = filter (Text.any (/= '\n')) . Text.splitOn "\n\n" <$> Text.getContents
+
+findLine :: Text -> Text -> Text
+findLine prefix paragraph =
+  let find = \case
+        [] -> error $ "missing " <> Text.unpack prefix <> ":\n" <> Text.unpack paragraph
+        (line : lines) -> case Text.stripPrefix prefix line of
+          Nothing -> find lines
+          Just text -> text
+   in find $ Text.lines paragraph
 
 keyParser :: Parser (NodeHash, Node)
 keyParser = do
@@ -180,8 +191,8 @@ skippingWarning parser = do
   void $ Parser.manyTill Parser.anyChar $ Parser.string "\n\n"
   parser
 
-graphParserLegacy :: Parser Graph
-graphParserLegacy = skippingWarning $ do
+skyframeParserLegacy :: Parser Graph
+skyframeParserLegacy = skippingWarning $ do
   graph <- mconcat <$> nodeParser `Parser.sepBy1` Parser.endOfLine
   Parser.skipSpace
   Parser.endOfInput
@@ -206,8 +217,8 @@ skyframeExampleLegacy =
       "GREEN_NODE:NodeData{aab8e2e}|RED_NODE:NodeData{5cedeee}"
     ]
 
-graphParser :: Parser Graph
-graphParser = skippingWarning $ do
+skyframeParser :: Parser Graph
+skyframeParser = skippingWarning $ do
   graph <- mconcat <$> Parser.many1 nodeParser
   Parser.skipSpace
   Parser.endOfInput
@@ -268,6 +279,17 @@ skyframeExample =
       "",
       ""
     ]
+
+checkSkyframeParserEquivalence :: IO ()
+checkSkyframeParserEquivalence = do
+  let zeroEdges = second $ Set.map $ \(Edge _ s t) -> Edge 0 s t
+      resultLegacy = Parser.parseOnly skyframeParserLegacy skyframeExampleLegacy
+      result = Parser.parseOnly skyframeParser skyframeExample
+  if resultLegacy == (zeroEdges <$> result)
+    then pure ()
+    else error $ "parsers not equivalent"
+
+-- $> Import.checkSkyframeParserEquivalence
 
 indexPaths :: Database -> TVar (Int, Int) -> IO ()
 indexPaths database progress = do

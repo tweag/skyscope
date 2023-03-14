@@ -33,12 +33,12 @@ import qualified Data.Text.Lazy as LazyText
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData (..))
 import Model
-import Prelude
 import Query (HasFindPathMemo, findPath)
-import qualified Sqlite
 import Sqlite (Database)
+import qualified Sqlite
 import System.Exit (ExitCode (..))
 import System.Process.Text (readProcessWithExitCode)
+import Prelude
 
 data RenderResult = RenderResult
   { renderOutput :: LazyText.Text,
