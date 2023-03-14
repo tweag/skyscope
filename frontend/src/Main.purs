@@ -768,7 +768,7 @@ logError err = do
   pure shown
   where
     shouldShow s = not $ Array.any (contains s)
-      [ "action superseded", "pattern unchanged" ]
+      [ "superseded", "pattern unchanged" ]
     contains s = flip String.contains (show s) <<< Pattern
 
 error :: forall m a. MonadThrow Error m => String -> m a
