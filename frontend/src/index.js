@@ -1,4 +1,4 @@
-window.onload = function() {
+window.onload = function () {
     const checkboxes = [];
     for (const checkbox of document.getElementsByClassName("delete")) {
         checkboxes.push(checkbox);

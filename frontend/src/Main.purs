@@ -19,7 +19,7 @@ import Data.Array.NonEmpty as Array.NonEmpty
 import Data.DateTime as DateTime
 import Data.DateTime.Instant as Instant
 import Data.Either (Either(..), fromRight)
-import Data.Foldable (any, foldMap, foldl, for_, sequence_, traverse_)
+import Data.Foldable (foldMap, foldl, for_, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Number as Number
@@ -362,19 +362,31 @@ attachGraphRenderer graph nodeConfiguration onClick = do
         listener <- EventTarget.eventListener \event ->
           for_ (MouseEvent.fromEvent event) (handleClick $ NodeClick node)
         EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget node
-        hash <- Element.id node
+        nodeHash <- Element.id node
         deconstructNodeElement node >>= case _ of
           Just (VisibleNode visibleNode) -> do
             addClass visibleNode.background "Selectable"
-            prettyNodeType <- formatNodeType <$> textContent visibleNode.nodeType
-            addClass node prettyNodeType
-            setTextContent prettyNodeType visibleNode.nodeType
+            nodeType <- formatNodeType <$> textContent visibleNode.nodeType
+            addClass node nodeType
             addClass visibleNode.nodeType "NodeType"
-            nodeData <- textContent visibleNode.nodeLabel
-            let label = prettyNodeLabel hash prettyNodeType nodeData
-                maxChars = 40
+            nodeLabel <- textContent visibleNode.nodeLabel
+
+            -- TODO: Fetch context and pass it to formatNode
+
+            formatResult <- formatNode $ Object.fromFoldable
+                  [ "hash" /\ nodeHash
+                  , "type" /\ nodeType
+                  , "label" /\ nodeLabel
+                  , "context" /\ ""
+                  ]
+            let getFormatted field = Object.lookup field formatResult
+                  # fromMaybe ("<missing " <> field <> ">")
+            setTextContent (getFormatted "type") visibleNode.nodeType
+            let maxChars = 40
+                label = getFormatted "label"
                 ellipsis = if String.length label > maxChars then "…" else ""
-            setTextContent (ellipsis <> String.takeRight maxChars label) visibleNode.nodeLabel
+                labelContent = ellipsis <> String.takeRight maxChars label
+            setTextContent labelContent visibleNode.nodeLabel
             addClass visibleNode.nodeLabel "NodeLabel"
             pure unit
           _ -> pure unit
@@ -386,6 +398,11 @@ attachGraphRenderer graph nodeConfiguration onClick = do
           EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget edge
         animateFadeIn edge
 
+        {-
+      result <- Affjax.post Affjax.ResponseFormat.json url
+        $ Just $ Affjax.RequestBody.json $ Argonaut.fromString
+        $ "%" <> pattern <> "%"
+        -}
 
     animateNodeTranslation :: Element -> Effect Unit
     animateNodeTranslation newNode = do
@@ -452,60 +469,21 @@ deconstructEdgeElement edge = getElementsByTagName "text" edge <#> case _ of
   [ label ] -> Just $ PathElement { label }
   _ -> Nothing
 
+type NodeFields =
+  { type :: String
+  , label :: String
+  , context :: String
+  }
 
-prettyNodeLabel :: NodeHash -> String -> String -> String
-prettyNodeLabel hash nodeType nodeData = case nodeType of
-  t | any (_ == t)
-    [ "DirectoryListing"
-    , "DirectoryListingState"
-    , "File"
-    , "FileState"
-    , "WorkspaceFile"
-    ] -> matching ".*\\[([^\\]]*)\\]\\/\\[([^\\]]*)\\]" nodeData $ case _ of
-      [ Just m1, Just m2 ] -> m1 <> "/" <> m2
-      _ -> default
-  t | any (_ == t)
-    [ "ActionExecution"
-    , "ConfiguredTarget"
-    , "TargetCompletion"
-    ] -> matching "label=(.+), config" nodeData $ case _ of
-      [ Just m1 ] -> m1
-      _ -> default
-  t | any (_ == t)
-    [ "Artifact"
-    ] -> matching "\\[.*\\]([^\\[\\]]+)" nodeData $ case _ of
-      [ Just m1 ] -> m1
-      _ -> default
-  t | any (_ == t)
-    [ "BzlLoad"
-    , "ClientEnvironmentVariable"
-    , "ContainingPackageLookup"
-    , "IgnoredPackagePrefixes"
-    , "Package"
-    , "PackageLookup"
-    , "Precomputed"
-    , "RepositoryDirectory"
-    ] -> matching ":(.*)" nodeData $ case _ of
-      [ Just m1 ] -> m1
-      _ -> default
-  t | any (_ == t)
-    [ "Glob"
-    ] -> matching "subdir=(.*) pattern=(.+) globberOperation" nodeData $ case _ of
-      [ Just m1, Just m2 ] -> m1 <> (if String.length m1 > 0 then "/" else "") <> m2
-      _ -> default
-  t | any (_ == t)
-    [ "SingleToolchainResolution"
-    ] -> matching "toolchainTypeLabel=(.+), targetPlatformKey" nodeData $ case _ of
-      [ Just m1 ] -> m1
-      _ -> default
-  _ -> default
-  where
-    matching r s f =
-      let regex = Regex.unsafeRegex r Regex.noFlags
-      in case Regex.match regex s of
-          Just matches -> f $ Array.NonEmpty.tail matches
-          Nothing -> default
-    default = String.take 32 hash
+{-
+derive instance genericNodeFields :: Generic NodeFields _
+
+instance decodeJsonNodeFields :: DecodeJson NodeFields where
+  decodeJson = genericDecodeJson
+           
+instance encodeJsonNodeFields :: EncodeJson NodeFields where
+  encodeJson = genericEncodeJson
+  -}
 
 createSearchBox :: NodeConfiguration -> Effect (Element /\ Effect Unit)
 createSearchBox nodeConfiguration = do
@@ -861,6 +839,8 @@ foreign import updateSaveLink :: Effect Unit
 foreign import setCheckpoint :: Json -> Effect Unit
 
 foreign import getCheckpoint :: Effect Json
+
+foreign import formatNode :: Object String -> Effect (Object String)
 
 undefined :: forall a. a
 undefined = unsafeCoerce unit

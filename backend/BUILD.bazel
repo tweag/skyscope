@@ -26,6 +26,7 @@ haskell_binary(
     extra_srcs = [
         "//frontend:main.js",
         "//frontend:src/index.js",
+        "//frontend:src/format.js",
         "//frontend:src/theme.css",
         "//backend:src/schema.sql",
     ],
