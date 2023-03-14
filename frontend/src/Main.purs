@@ -123,6 +123,7 @@ instance Show NodeState where
 
 type NodeConfiguration =
   { onChange :: (Maybe NodeHash -> Effect Unit) -> Effect Unit
+  , atomically :: Effect (Maybe NodeHash) -> Effect Unit
   , show :: NodeHash -> NodeState -> Effect Unit
   , hide :: NodeHash -> Effect Unit
   , visible :: Effect (Array NodeHash)
@@ -132,34 +133,36 @@ type NodeConfiguration =
 
 makeNodeConfiguration :: Effect NodeConfiguration
 makeNodeConfiguration = do
+  atomicSemaphore <- Ref.new 0
   nodeStates <- Ref.new Object.empty
   channel <- Signal.channel Nothing
   let notify = Signal.send channel
+      modify changed f = atomically $ changed <$ Ref.modify_ f nodeStates
       onChange action = Signal.runSignal $ action <$> Signal.subscribe channel
-      show hash state = modify true (Just hash) (Object.insert hash state)
-      hide hash = modify true (Just hash) (Object.delete hash)
+
+      atomically action = do
+        reentrancyCount <- Ref.modify (_ + 1) atomicSemaphore
+        changed <- action
+        historyState <- Tuple changed <$> Ref.read nodeStates
+        when (reentrancyCount == 1) do
+          pushHistory $ Argonaut.encodeJson historyState
+        notify changed
+        Ref.modify_ (_ - 1) atomicSemaphore
+
+      show hash state = modify (Just hash) (Object.insert hash state)
+      hide hash = modify (Just hash) (Object.delete hash)
       visible = Object.keys <$> Ref.read nodeStates
+
       set json = case Argonaut.decodeJson json of
         Right s -> Ref.write s nodeStates *> notify Nothing
         Left err -> error $ Show.show err
       get = Argonaut.encodeJson <$> Ref.read nodeStates
-      modify push changedNodeHash f = do
-        Ref.modify_ f nodeStates
-        when push $ pushHistory <<< Argonaut.encodeJson =<<
-          (changedNodeHash /\ _) <$> Ref.read nodeStates
-        notify changedNodeHash
+
   onPopHistory $ Argonaut.decodeJson >>> case _ of
     Left err -> error $ "failed to decode history: " <> Show.show err
-    Right (changedNodeHash /\ state) -> modify false changedNodeHash (const state)
-  pure { onChange, show, hide, visible, set, get }
+    Right (changed /\ state) -> Ref.write state nodeStates *> notify changed
 
-defaultState :: Object NodeState
-defaultState = Object.fromFoldable
-  [ "68ba042abae3b2e637cf502a163ca9d786f617f8199f382e7ac2834aab5a1729" /\ Expanded
-  , "f06f79868fc702f91c95e2d8ff737bd5ffd84226f99c52643a4dfc89cc82794b" /\ Expanded
-  , "7984ff756858d097c09406eaab1b628996425a0e85256c8933aab97f72e7a2c9" /\ Collapsed
-  , "8b33f6a44ff713e4093ad02ef463df4757f034c2e2746e7efc34a7fd0fdb1973" /\ Collapsed
-  ]
+  pure { onChange, show, hide, atomically, visible, set, get }
 
 data Click
   = NodeClick Element
@@ -216,7 +219,8 @@ makeTools graph nodeConfiguration = do
             ]
           case result of
             Right response -> case join $ Argonaut.toArray response.body <#> traverse Argonaut.toString of
-              Just path -> liftEffect $ for_ (orderOutsideIn path) $ flip nodeConfiguration.show Collapsed
+              Just path -> liftEffect $ nodeConfiguration.atomically $ Nothing <$ do
+                for_ (orderOutsideIn path) $ flip nodeConfiguration.show Collapsed
               Nothing -> error "unexpected path results json"
             Left err -> error $ Affjax.printError err
       _ -> error "malformed edge id"
@@ -242,9 +246,10 @@ makeTools graph nodeConfiguration = do
         updateDOM
         selection <- Ref.read selectionRef
         when (not $ Object.isEmpty selection) $
-          nodeConfiguration.visible >>= traverse_
-            \hash -> if hash `Object.member` selection
-              then pure unit else nodeConfiguration.hide hash
+          nodeConfiguration.atomically $ Nothing <$ do
+            nodeConfiguration.visible >>= traverse_
+              \hash -> if hash `Object.member` selection
+                then pure unit else nodeConfiguration.hide hash
       pure \click _ -> Ref.read activeRef >>= not >>> if _ then pure false else
         case click of
           NodeClick node -> do
@@ -289,7 +294,7 @@ attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler Boolean -> E
 attachGraphRenderer graph nodeConfiguration onClick = do
   render <- makeRenderer
   renderState <- Signal.channel RenderInit
-  renderState <$ nodeConfiguration.onChange \changedNodeHash -> do
+  renderState <$ nodeConfiguration.onChange \changed -> do
     let notify st = Signal.send renderState st
     startTime <- Instant.toDateTime <$> now
     let runAff = Aff.runAff_ $ case _ of
@@ -323,7 +328,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
               _ -> pure unit
           removeAllChildren graph
           appendElement svg graph
-          for_ changedNodeHash $ getElementById >=> traverse \element -> do
+          for_ changed $ getElementById >=> traverse \element -> do
             addClass element "Highlight"
             void $ Timer.setTimeout (2 * animationDuration) do
               scrollIntoView element
