@@ -306,8 +306,8 @@ attachGraphRenderer graph nodeConfiguration onClick = do
     startTime <- Instant.toDateTime <$> now
     let runAff = Aff.runAff_ $ case _ of
           Left err -> do
-            shown <- logError $ show err
-            when shown $ notify $ RenderFail Nothing
+            logError $ show err
+            notify $ RenderFail Nothing
           Right (Left statusCode) -> do
             notify $ RenderFail $ Just statusCode
           Right (Right _) -> do
@@ -714,9 +714,9 @@ createTray nodeConfiguration renderState = do
 
   checkpointCandidate <- Ref.new Argonaut.jsonEmptyObject
   renderingCount <- Ref.new 0
-  let incrementRenderingCount = do
+  let whenStarting action = do
         n <- Ref.modify (_ + 1) renderingCount
-        when (n == 1) $ flip Ref.write checkpointCandidate =<< nodeConfiguration.get
+        when (n == 1) action
       whenQuiescent action = do
         n <- Ref.modify (_ - 1) renderingCount
         when (n == 0) action
@@ -733,7 +733,7 @@ createTray nodeConfiguration renderState = do
           when (MouseEvent.button mouseEvent == 0) do
             Location.reload =<< Window.location =<< HTML.window
       EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget icon
-      incrementRenderingCount
+      whenStarting $ flip Ref.write checkpointCandidate =<< nodeConfiguration.get
 
     RenderDone (Milliseconds elapsed) -> whenQuiescent $ replaceDiv "RenderDone" \div -> do
       status <- createElement "span" "Status" $ Just div
@@ -765,14 +765,11 @@ makeThrottledAction action = do
 
 launchAff :: Aff Unit -> Effect Unit
 launchAff = Aff.runAff_ $ case _ of
-  Left err -> void $ logError $ show err
+  Left err -> logError $ show err
   _ -> pure unit
 
-logError :: String -> Effect Boolean
-logError err = do
-  let shown = shouldShow err
-  --when shown (Console.error err)
-  pure shown
+logError :: String -> Effect Unit
+logError err = when (shouldShow err) (Console.error err)
   where
     shouldShow s = not $ Array.any (contains s)
       [ "superseded", "pattern unchanged" ]

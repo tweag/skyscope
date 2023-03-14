@@ -13,6 +13,8 @@ main :: IO ()
 main = do
   getArgs >>= \case
     ["import-skyframe", path] -> Import.importSkyframe path
+    ["import-targets", path] -> Import.importTargets path
+    ["import-actions", path] -> Import.importActions path
     ["server", port] -> case readMaybe port of
       Nothing -> error $ "unable to parse port: " <> port
       Just port -> daemonize $ Server.server port

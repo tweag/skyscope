@@ -166,3 +166,21 @@ filterNodes database limit = memoize "filterNodes" getFilterNodesMemo $ \pattern
     Map.fromList $
       records <&> \[SQLText hash, SQLText nodeData, SQLText nodeType] ->
         (hash, Node nodeData nodeType)
+
+type GetContextMemo = TVar (Map Text Text)
+
+type HasGetContextMemo r = HasField "getContext" r GetContextMemo
+
+getContextMemo :: HasGetContextMemo r => r -> GetContextMemo
+getContextMemo = hLookupByLabel (Label :: Label "getContext")
+
+getContext ::
+  HasGetContextMemo r => Database -> Text -> Memoize r Text
+getContext database = memoize "getContext" getContextMemo $ \nodeKey -> do
+  SQLText nodeContext <-
+    liftIO $
+      Sqlite.executeSqlScalar
+        database
+        ["SELECT context_data FROM context WHERE node_key = ?;"]
+        [SQLText nodeKey]
+  pure nodeContext

@@ -27,6 +27,7 @@ haskell_binary(
         "//frontend:main.js",
         "//frontend:src/index.js",
         "//frontend:src/theme.css",
+        "//backend:src/schema.sql",
     ],
     deps = [
         ":base",
