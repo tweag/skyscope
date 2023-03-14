@@ -250,10 +250,11 @@ server port = withImportDb $ \importDatabase -> do
 
     formatJs :: IO Text
     formatJs = do
-      functionBody <- getSkyscopeEnv "FORMAT_JS" >>= \case
-        Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/format.js")
-        Just path -> Text.readFile path
-      pure $ "function _formatNode(node) { " <> functionBody <> " };"
+      functionBody <-
+        getSkyscopeEnv "FORMAT_JS" >>= \case
+          Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/format.js")
+          Just path -> Text.readFile path
+      pure $ "function _formatNodeContent(node) { " <> functionBody <> " };"
 
     themeCss :: IO Text
     themeCss =

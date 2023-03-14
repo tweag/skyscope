@@ -148,19 +148,14 @@ renderGraph database nodeStates = do
           hidden = nodeState == Nothing
        in "    node_" <> nodeHash
             <> graphvizAttributes
-              [ ("width", if hidden then "0.2" else "3.0"),
-                ("height", if hidden then "0.2" else "0.6"),
+              [ ("tooltip", truncatedNodeData),
+                ("class", Text.pack $ fromMaybe "" $ show <$> nodeState),
                 ("shape", if hidden then "point" else "box"),
+                ("height", if hidden then "0.2" else "0.6"),
+                ("width", if hidden then "0.2" else "3.0"),
                 ("fixedsize", "true"),
                 ("label", label),
-                ("id", nodeHash),
-                ("class", Text.pack $ fromMaybe "" $ show <$> nodeState),
-                ( "tooltip",
-                  truncatedNodeData <> "\n\n" <> case nodeState of
-                    Just Expanded -> "Click to collapse this node and hide its edges. Hold CTRL and click to hide it entirely."
-                    Just Collapsed -> "Click to expand this node and show its edges. Hold CTRL and click to hide it."
-                    Nothing -> "Click to show this node."
-                )
+                ("id", nodeHash)
               ]
 
     graphvizEdge :: [(Text, Text)] -> Edge -> Text

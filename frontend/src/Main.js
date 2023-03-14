@@ -65,7 +65,7 @@ export function updateSaveLink() {
         return;
     }
     Array.from(svg.getElementsByClassName("Animation")).forEach(animation => animation.parentNode.removeChild(animation));
-    Array.from(svg.getElementsByClassName("Changed")).forEach(element => element.classList.remove("Changed"));
+    Array.from(svg.getElementsByClassName("Highlight")).forEach(element => element.classList.remove("Highlight"));
     Array.from(svg.getElementsByTagName("a")).forEach(a => a.removeAttribute("xlink:title"));
     Array.from(svg.getElementsByTagName("title")).forEach(title => title.parentNode.removeChild(title));
     const style = document.getElementsByTagName("style")[0].cloneNode(true);
@@ -92,9 +92,9 @@ export function getCheckpoint() {
     return JSON.parse(window.localStorage.getItem(importId) ?? "null");
 }
 
-// formatNode :: Object String -> Effect (Object String)
-export function formatNode(node) {
+// formatNodeContent :: Object String -> Effect (Object String)
+export function formatNodeContent(node) {
     return function () {
-        return _formatNode(node);
+        return _formatNodeContent(node);
     }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euxo pipefail
 
 build-skyscope() {
   # Users may not have enabled flakes in nix.conf so do it explicitly via cli args.
@@ -43,6 +43,7 @@ run-skyscope server "$SERVER_PORT"
 
 # Create a new empty database for the import.
 export SKYSCOPE_WORKSPACE="$(bazel info | grep -Po '(?<=workspace: ).*')"
+export SKYSCOPE_OUTPUT_BASE="$(bazel info | grep -Po '(?<=output_base: ).*')"
 DB_TEMPLATE="$(basename "$SKYSCOPE_WORKSPACE")-XXXXX.sqlite"
 IMPORT_DIR="$HOME/.skyscope/imports"
 mkdir -p "$IMPORT_DIR"
@@ -51,11 +52,11 @@ DB_PATH="$(mktemp -p "$IMPORT_DIR" "$DB_TEMPLATE")"
 # Dump Skyframe graph and import it into a new database.
 (sleep 0.1; bazel dump --skyframe=$DUMP_OPT) | run-skyscope import-skyframe "$DB_PATH"
 
-# TODO: Add --action_pattern arg and pass value to aquery
-(sleep 0.1; bazel aquery //...) | run-skyscope import-actions "$DB_PATH"
+# TODO: Add --aquery arg and pass value to aquery
+(sleep 0.1; bazel aquery 'deps(//...)') | run-skyscope import-actions "$DB_PATH"
 
-# TODO: Add --target_pattern arg and pass value to aquery
-(sleep 0.1; bazel query //... --output build) | run-skyscope import-targets "$DB_PATH"
+# TODO: Add --query arg and pass value to query
+(sleep 0.1; bazel query 'deps(//...)' --output build) | run-skyscope import-targets "$DB_PATH"
 
 # Let the server know about the imported graph.
 URL_BASE="http://localhost:28581"

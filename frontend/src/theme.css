@@ -132,7 +132,7 @@ div.ResultRow:hover, div.ResultRow.Selected:hover {
     background-color: hsl(199, 21%, 77%);
 }
 
-div.ResultRow > span.NodeType {
+div.ResultRow > span.NodeTitle {
     font-weight: bold;
     margin-right: 10px;
     overflow: ellipsis;
@@ -148,55 +148,59 @@ div.ResultRow > span.Highlight {
     text-decoration: underline;
 }
 
-div.ResultRow                           span.NodeType { color: hsl(  0,  0%, 25%); }
-div.ResultRow.ActionExecution           span.NodeType { color: hsl(318, 55%, 29%); }
-div.ResultRow.Artifact                  span.NodeType { color: hsl( 71, 55%, 29%); }
-div.ResultRow.ArtifactNestedSet         span.NodeType { color: hsl( 71, 55%, 29%); }
-div.ResultRow.BuildConfiguration        span.NodeType { color: hsl(117, 55%, 29%); }
-div.ResultRow.ClientEnvironmentVariable span.NodeType { color: hsl(163, 55%, 29%); }
-div.ResultRow.ConfiguredTarget          span.NodeType { color: hsl(117, 55%, 29%); }
-div.ResultRow.ContainingPackageLookup   span.NodeType { color: hsl(117, 55%, 29%); }
-div.ResultRow.DirectoryListing          span.NodeType { color: hsl(271, 55%, 29%); }
-div.ResultRow.DirectoryListingState     span.NodeType { color: hsl(271, 55%, 29%); }
-div.ResultRow.File                      span.NodeType { color: hsl(271, 55%, 29%); }
-div.ResultRow.FileState                 span.NodeType { color: hsl(271, 55%, 29%); }
-div.ResultRow.Glob                      span.NodeType { color: hsl(233, 55%, 29%); }
-div.ResultRow.PackageLookup             span.NodeType { color: hsl(117, 55%, 29%); }
-div.ResultRow.SingleToolchainResolution span.NodeType { color: hsl(  7, 55%, 29%); }
-div.ResultRow.SingleToolchainResolution span.NodeType { color: hsl(  7, 55%, 29%); }
-div.ResultRow.TargetCompletion          span.NodeType { color: hsl(198, 55%, 29%); }
-div.ResultRow.ToolchainResolution       span.NodeType { color: hsl(  7, 55%, 29%); }
+div.ResultRow                           span.NodeTitle { color: hsl(  0,  0%, 25%); }
+div.ResultRow.ActionExecution           span.NodeTitle { color: hsl(318, 55%, 29%); }
+div.ResultRow.Artifact                  span.NodeTitle { color: hsl( 71, 55%, 29%); }
+div.ResultRow.ArtifactNestedSet         span.NodeTitle { color: hsl( 71, 55%, 29%); }
+div.ResultRow.BuildConfiguration        span.NodeTitle { color: hsl(117, 55%, 29%); }
+div.ResultRow.ClientEnvironmentVariable span.NodeTitle { color: hsl(163, 55%, 29%); }
+div.ResultRow.ConfiguredTarget          span.NodeTitle { color: hsl(117, 55%, 29%); }
+div.ResultRow.ContainingPackageLookup   span.NodeTitle { color: hsl(117, 55%, 29%); }
+div.ResultRow.DirectoryListing          span.NodeTitle { color: hsl(271, 55%, 29%); }
+div.ResultRow.DirectoryListingState     span.NodeTitle { color: hsl(271, 55%, 29%); }
+div.ResultRow.File                      span.NodeTitle { color: hsl(271, 55%, 29%); }
+div.ResultRow.FileState                 span.NodeTitle { color: hsl(271, 55%, 29%); }
+div.ResultRow.Glob                      span.NodeTitle { color: hsl(233, 55%, 29%); }
+div.ResultRow.PackageLookup             span.NodeTitle { color: hsl(117, 55%, 29%); }
+div.ResultRow.SingleToolchainResolution span.NodeTitle { color: hsl(  7, 55%, 29%); }
+div.ResultRow.SingleToolchainResolution span.NodeTitle { color: hsl(  7, 55%, 29%); }
+div.ResultRow.BzlLoad                   span.NodeTitle { color: hsl(203, 55%, 29%); }
+div.ResultRow.ToolchainResolution       span.NodeTitle { color: hsl(  7, 55%, 29%); }
+div.ResultRow.TransitiveTarget          span.NodeTitle { color: hsl(117, 55%, 29%); }
+div.ResultRow.TargetCompletion          span.NodeTitle { color: hsl(117, 55%, 29%); }
 
-g.node                                  text.NodeType {  fill: hsl(  0,  0%, 25%); }
-g.node.ActionExecution                  text.NodeType {  fill: hsl(318, 55%, 29%); }
-g.node.Artifact                         text.NodeType {  fill: hsl( 71, 55%, 29%); }
-g.node.ArtifactNestedSet                text.NodeType {  fill: hsl( 71, 55%, 29%); }
-g.node.BuildConfiguration               text.NodeType {  fill: hsl(117, 55%, 29%); }
-g.node.ClientEnvironmentVariable        text.NodeType {  fill: hsl(163, 55%, 29%); }
-g.node.ConfiguredTarget                 text.NodeType {  fill: hsl(117, 55%, 29%); }
-g.node.ContainingPackageLookup          text.NodeType {  fill: hsl(117, 55%, 29%); }
-g.node.DirectoryListing                 text.NodeType {  fill: hsl(271, 55%, 29%); }
-g.node.DirectoryListingState            text.NodeType {  fill: hsl(271, 55%, 29%); }
-g.node.File                             text.NodeType {  fill: hsl(271, 55%, 29%); }
-g.node.FileState                        text.NodeType {  fill: hsl(271, 55%, 29%); }
-g.node.Glob                             text.NodeType {  fill: hsl(233, 55%, 29%); }
-g.node.PackageLookup                    text.NodeType {  fill: hsl(117, 55%, 29%); }
-g.node.SingleToolchainResolution        text.NodeType {  fill: hsl(  7, 55%, 29%); }
-g.node.SingleToolchainResolution        text.NodeType {  fill: hsl(  7, 55%, 29%); }
-g.node.TargetCompletion                 text.NodeType {  fill: hsl(198, 55%, 29%); }
-g.node.ToolchainResolution              text.NodeType {  fill: hsl(  7, 55%, 29%); }
+g.node                                  text.NodeTitle {  fill: hsl(  0,  0%, 25%); }
+g.node.ActionExecution                  text.NodeTitle {  fill: hsl(318, 55%, 29%); }
+g.node.Artifact                         text.NodeTitle {  fill: hsl( 71, 55%, 29%); }
+g.node.ArtifactNestedSet                text.NodeTitle {  fill: hsl( 71, 55%, 29%); }
+g.node.BuildConfiguration               text.NodeTitle {  fill: hsl(117, 55%, 29%); }
+g.node.ClientEnvironmentVariable        text.NodeTitle {  fill: hsl(163, 55%, 29%); }
+g.node.ConfiguredTarget                 text.NodeTitle {  fill: hsl(117, 55%, 29%); }
+g.node.ContainingPackageLookup          text.NodeTitle {  fill: hsl(117, 55%, 29%); }
+g.node.DirectoryListing                 text.NodeTitle {  fill: hsl(271, 55%, 29%); }
+g.node.DirectoryListingState            text.NodeTitle {  fill: hsl(271, 55%, 29%); }
+g.node.File                             text.NodeTitle {  fill: hsl(271, 55%, 29%); }
+g.node.FileState                        text.NodeTitle {  fill: hsl(271, 55%, 29%); }
+g.node.Glob                             text.NodeTitle {  fill: hsl(233, 55%, 29%); }
+g.node.PackageLookup                    text.NodeTitle {  fill: hsl(117, 55%, 29%); }
+g.node.SingleToolchainResolution        text.NodeTitle {  fill: hsl(  7, 55%, 29%); }
+g.node.SingleToolchainResolution        text.NodeTitle {  fill: hsl(  7, 55%, 29%); }
+g.node.BzlLoad                          text.NodeTitle {  fill: hsl(203, 55%, 29%); }
+g.node.ToolchainResolution              text.NodeTitle {  fill: hsl(  7, 55%, 29%); }
+g.node.TransitiveTarget                 text.NodeTitle {  fill: hsl(117, 55%, 29%); }
+g.node.TargetCompletion                 text.NodeTitle {  fill: hsl(117, 55%, 29%); }
 
 g.node {
     cursor: pointer;
     user-select: none;
 }
 
-g.node text.NodeType {
+g.node text.NodeTitle {
     font-size: 14px;
     font-weight: bold;
 }
 
-g.node text.NodeLabel {
+g.node text.NodeDetail {
     font-size: 10px;
 }
 

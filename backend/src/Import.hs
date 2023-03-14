@@ -8,6 +8,7 @@
 module Import where
 
 import Common
+import Control.Applicative ((<|>))
 import Control.Arrow ((&&&))
 import Control.Category ((>>>))
 import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
@@ -30,7 +31,7 @@ import Data.Function ((&))
 import Data.Functor ((<&>), void)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.List (uncons)
+import Data.List (sortOn, uncons)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
@@ -72,6 +73,8 @@ withDatabase label path action = timed label $
 
 addContext :: Database -> [(Text, Text)] -> IO ()
 addContext database context = do
+  --for_ context $ \(contextKey, contextData) -> do
+  --  putStrLn $ "\x1b[1;36m" <> Text.unpack contextKey <> "\x1b[0m  " -- <> Text.unpack contextData
   let records = context <&> \(k, v) -> [SQLText k, SQLText v]
   Sqlite.batchInsert database "context" ["context_key", "context_data"] records
 
@@ -157,9 +160,14 @@ importActions :: FilePath -> IO ()
 importActions path = withDatabase "importing actions" path $ \database -> do
   let parseAction paragraph = (findLine "  Target: " paragraph, paragraph)
       indexedActions group = (0 :| [1 ..]) `NonEmpty.zip` (snd <$> group)
+      filterActions = filter $ \paragraph -> isJust $
+        Text.stripPrefix "action " paragraph <|>
+        Text.stripPrefix "runfiles " paragraph
   groups <-
     NonEmpty.groupBy (\x y -> fst x == fst y)
+      . sortOn fst
       . map parseAction
+      . filterActions
       <$> getParagraphs
   addContext database $
     concat $
