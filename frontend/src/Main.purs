@@ -237,19 +237,26 @@ makeTools graph nodeConfiguration = do
             when active $ case Object.lookup hash selection of
               Just _ -> addClass node "Selected"
               Nothing -> addClass node "Unselected"
-      onKeyDown "Shift" do
-        Ref.write true activeRef
-        Ref.write Object.empty selectionRef
-        updateDOM
-      onKeyUp "Shift" do
-        Ref.write false activeRef
-        updateDOM
-        selection <- Ref.read selectionRef
-        when (not $ Object.isEmpty selection) $
-          nodeConfiguration.atomically $ Nothing <$ do
-            nodeConfiguration.visible >>= traverse_
-              \hash -> if hash `Object.member` selection
-                then pure unit else nodeConfiguration.hide hash
+          begin = do
+            Ref.write true activeRef
+            updateDOM
+          clear = do
+            Ref.write false activeRef
+            Ref.write Object.empty selectionRef
+            updateDOM
+          commit = do
+            selection <- Ref.read selectionRef
+            when (not $ Object.isEmpty selection) $
+              nodeConfiguration.atomically $ Nothing <$ do
+                nodeConfiguration.visible >>= traverse_
+                  \hash -> if hash `Object.member` selection
+                    then pure unit else nodeConfiguration.hide hash
+            clear
+      onKeyDown "Shift" begin
+      onKeyUp "Shift" commit
+      onElementEvent graph EventTypes.mouseenter \event ->
+        for_ (MouseEvent.fromEvent event) \mouseEvent -> do
+          if MouseEvent.shiftKey mouseEvent then pure unit else clear
       pure \click _ -> Ref.read activeRef >>= not >>> if _ then pure false else
         case click of
           NodeClick node -> do
@@ -602,13 +609,6 @@ createSearchBox nodeConfiguration = do
         timerId <- Timer.setTimeout delay $ addClass searchBox "Fade"
         Ref.write (Just timerId) fadeTimerId
 
-  let onElementEvent :: Element -> EventType -> (Event -> Effect Unit) -> Effect Unit
-      onElementEvent element eventType handler = do
-        let target = HTMLElement.toEventTarget
-                 <$> HTMLElement.fromElement element
-        listener <- EventTarget.eventListener handler
-        for_ target $ EventTarget.addEventListener eventType listener false
-
   onElementEvent searchBox EventTypes.mouseenter $ const $ Ref.write true mouseOverSearchBox *> resetSearchBoxFade
   onElementEvent searchBox EventTypes.mouseleave $ const $ Ref.write false mouseOverSearchBox *> resetSearchBoxFade
   onElementEvent searchBox EventTypes.mousemove $ const resetSearchBoxFade
@@ -676,6 +676,13 @@ onDocumentEvent eventType handler = do
   target <- Window.toEventTarget <$> HTML.window
   listener <- EventTarget.eventListener handler
   EventTarget.addEventListener eventType listener false target
+
+onElementEvent :: Element -> EventType -> (Event -> Effect Unit) -> Effect Unit
+onElementEvent element eventType handler = do
+  let target = HTMLElement.toEventTarget
+           <$> HTMLElement.fromElement element
+  listener <- EventTarget.eventListener handler
+  for_ target $ EventTarget.addEventListener eventType listener false
 
 formatNodeType :: String -> String
 formatNodeType nodeType
