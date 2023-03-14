@@ -45,90 +45,22 @@ import Sqlite (Database)
 import qualified Sqlite
 import Prelude
 
-importer :: FilePath -> IO ()
-importer path = do
-  putStrLn $ "importing graph: " <> path
-  Sqlite.withDatabase path $ \database -> do
-    optimiseDatabaseAccess database
-    importGraph database
-  putStrLn $ "indexing"
-  Sqlite.withDatabase path $ \database -> do
-    optimiseDatabaseAccess database
-    indexing <- indexPathsAsync database
-    atomically $
-      readTVar indexing >>= \case
-        False -> pure ()
-        True -> retry
-
-optimiseDatabaseAccess :: Database -> IO ()
-optimiseDatabaseAccess database =
-  Sqlite.executeStatements
-    database
+withDatabase :: String -> FilePath -> (Database -> IO a) -> IO a
+withDatabase label path action = timed label $ Sqlite.withDatabase path $ \database -> do
+  putStrLn label
+  createSchema database
+  Sqlite.executeStatements database
     [ ["pragma mmap_size = 10737418240;"],
       ["pragma journal_mode = WAL;"],
       ["pragma synchronous = off;"]
     ]
-
-indexPathsAsync :: Database -> IO (TVar Bool)
-indexPathsAsync database = do
-  progress <- newTVarIO (0, 1)
-  indexStartTime <- Clock.getCurrentTime
-  void $ forkIO $ indexPaths database progress
-  indexing <- newTVarIO True
-  let showProgress = do
-        threadDelay 100_000
-        (done, total) <- readTVarIO progress
-        timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
-        let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
-            expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime :: Integer
-            ansi = if done < total then "37" else "32"
-        putStrLn $
-          "\x1b[1F\x1b[2K\x1b[" <> ansi <> "mindexed paths to "
-            <> show done
-            <> " nodes ("
-            <> show total
-            <> " total, "
-            <> show expectedTime
-            <> " seconds remaining)\x1b[0m"
-        if done < total
-          then showProgress
-          else do
-            putStrLn $ "  time taken = " <> show timeTaken <> " seconds"
-            atomically $ writeTVar indexing False
-  void $ forkIO showProgress
-  pure indexing
-
-importGraph :: Database -> IO ()
-importGraph database = timed "importGraph" $ do
-  createSchema database
-  legacy <- getSkyscopeEnv "LEGACY_BAZEL"
-  let parser =
-        if isJust legacy
-          then graphParserLegacy
-          else graphParser
-  (nodes, edges) <-
-    Text.getContents <&> Parser.parseOnly parser >>= \case
-      Left err -> error $ "failed to parse skyframe graph: " <> err
-      Right graph -> pure graph
-  let assignIndex node = gets (,node) <* modify (+ 1)
-      indexedNodes = evalState (for nodes assignIndex) 1
-      coerceMaybe = fromMaybe $ error "parser produced an edge with an unknown node"
-      indexedEdges = coerceMaybe $
-        for (Set.toList edges) $ \(Edge group source target) -> do
-          (sourceIndex, _) <- Map.lookup source indexedNodes
-          (targetIndex, _) <- Map.lookup target indexedNodes
-          pure (group, sourceIndex, targetIndex)
-  Sqlite.batchInsert database "node" ["idx", "hash", "data", "type"] $
-    Map.assocs indexedNodes <&> \(nodeHash, (nodeIdx, Node nodeData nodeType)) ->
-      SQLInteger nodeIdx : (SQLText <$> [nodeHash, nodeType <> ":" <> nodeData, nodeType])
-  Sqlite.batchInsert database "edge" ["group_num", "source", "target"] $
-    indexedEdges <&> \(g, s, t) -> SQLInteger <$> [fromIntegral g, s, t]
+  action database
   where
     createSchema :: Database -> IO ()
     createSchema database =
       Sqlite.executeStatements
         database
-        [ [ "CREATE TABLE node (",
+        [ [ "CREATE TABLE IF NOT EXISTS node (",
             "  idx INTEGER,",
             "  hash TEXT,",
             "  data TEXT,",
@@ -137,7 +69,7 @@ importGraph database = timed "importGraph" $ do
             "  UNIQUE (hash)",
             ");"
           ],
-          [ "CREATE TABLE edge (",
+          [ "CREATE TABLE IF NOT EXISTS edge (",
             "  source INTEGER,",
             "  target INTEGER,",
             "  group_num INTEGER,",
@@ -146,7 +78,7 @@ importGraph database = timed "importGraph" $ do
             "  FOREIGN KEY (target) REFERENCES node(idx)",
             ");"
           ],
-          [ "CREATE TABLE path (",
+          [ "CREATE TABLE IF NOT EXISTS path (",
             "  destination INTEGER,",
             "  steps BLOB,",
             "  PRIMARY KEY (destination),",
@@ -154,6 +86,70 @@ importGraph database = timed "importGraph" $ do
             ");"
           ]
         ]
+
+importSkyframe :: FilePath -> IO ()
+importSkyframe path = withDatabase "importing skyframe" path $ \database -> do
+  legacy <- getSkyscopeEnv "LEGACY_BAZEL"
+  let parser =
+        if isJust legacy
+          then graphParserLegacy
+          else graphParser
+
+  (nodes, edges) <-
+    Text.getContents <&> Parser.parseOnly parser >>= \case
+      Left err -> error $ "failed to parse skyframe graph: " <> err
+      Right graph -> pure graph
+
+  let assignIndex node = gets (,node) <* modify (+ 1)
+      indexedNodes = evalState (for nodes assignIndex) 1
+      coerceMaybe = fromMaybe $ error "parser produced an edge with an unknown node"
+      indexedEdges = coerceMaybe $
+        for (Set.toList edges) $ \(Edge group source target) -> do
+          (sourceIndex, _) <- Map.lookup source indexedNodes
+          (targetIndex, _) <- Map.lookup target indexedNodes
+          pure (group, sourceIndex, targetIndex)
+
+  Sqlite.batchInsert database "node" ["idx", "hash", "data", "type"] $
+    Map.assocs indexedNodes <&> \(nodeHash, (nodeIdx, Node nodeData nodeType)) ->
+      SQLInteger nodeIdx : (SQLText <$> [nodeHash, nodeType <> ":" <> nodeData, nodeType])
+  Sqlite.batchInsert database "edge" ["group_num", "source", "target"] $
+    indexedEdges <&> \(g, s, t) -> SQLInteger <$> [fromIntegral g, s, t]
+
+  indexing <- indexPathsAsync database
+  atomically $
+    readTVar indexing >>= \case
+      False -> pure ()
+      True -> retry
+
+  where
+    indexPathsAsync :: Database -> IO (TVar Bool)
+    indexPathsAsync database = do
+      progress <- newTVarIO (0, 1)
+      indexStartTime <- Clock.getCurrentTime
+      void $ forkIO $ indexPaths database progress
+      indexing <- newTVarIO True
+      let showProgress = do
+            threadDelay 100_000
+            (done, total) <- readTVarIO progress
+            timeTaken <- Clock.getCurrentTime <&> (`Clock.diffUTCTime` indexStartTime)
+            let unitTime = Clock.nominalDiffTimeToSeconds timeTaken / fromInteger (fromIntegral $ max 1 done)
+                expectedTime = ceiling $ fromInteger (fromIntegral $ total - done) * unitTime :: Integer
+                ansi = if done < total then "37" else "32"
+            putStrLn $
+              "\x1b[1F\x1b[2K\x1b[" <> ansi <> "mindexed paths to "
+                <> show done
+                <> " nodes ("
+                <> show total
+                <> " total, "
+                <> show expectedTime
+                <> " seconds remaining)\x1b[0m"
+            if done < total
+              then showProgress
+              else do
+                putStrLn $ "  time taken = " <> show timeTaken <> " seconds"
+                atomically $ writeTVar indexing False
+      void $ forkIO showProgress
+      pure indexing
 
 -- $> Import.checkParserEquivalence
 

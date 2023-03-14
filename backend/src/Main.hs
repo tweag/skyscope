@@ -12,7 +12,7 @@ import Text.Read (readMaybe)
 main :: IO ()
 main = do
   getArgs >>= \case
-    ["import", path] -> Import.importer path
+    ["import-skyframe", path] -> Import.importSkyframe path
     ["server", port] -> case readMaybe port of
       Nothing -> error $ "unable to parse port: " <> port
       Just port -> daemonize $ Server.server port
