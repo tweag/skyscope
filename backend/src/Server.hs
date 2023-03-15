@@ -197,10 +197,12 @@ server port = withImportDb $ \importDatabase -> do
            in Web.text =<< importRoute importDatabase route <* Web.setHeader "Content-Type" "image/svg+xml"
         Left err -> badRequest err
 
-    Web.get "/:importId/context" $ do
-      nodeKey <- Web.param "node_key"
-      let route Import {..} database = withMemo importId $ Query.getContext database nodeKey
-      Web.json =<< importRoute importDatabase route
+    Web.post "/:importId/context" $
+      Json.eitherDecode <$> Web.body >>= \case
+        Right contextKeys ->
+          let route Import {..} database = withMemo importId $ Query.getContext database contextKeys
+           in Web.json =<< importRoute importDatabase route
+        Left err -> badRequest err
   where
     importRoute :: Database -> (Import -> Database -> IO a) -> ActionM a
     importRoute importDatabase action =
