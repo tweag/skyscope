@@ -123,7 +123,7 @@ instance Show NodeState where
 
 type NodeConfiguration =
   { onChange :: (Maybe NodeHash -> Effect Unit) -> Effect Unit
-  , atomically :: Effect (Maybe NodeHash) -> Effect Unit
+  , atomically :: Aff (Maybe NodeHash) -> Aff Unit
   , show :: NodeHash -> NodeState -> Effect Unit
   , hide :: NodeHash -> Effect Unit
   , visible :: Effect (Array NodeHash)
@@ -137,17 +137,22 @@ makeNodeConfiguration = do
   nodeStates <- Ref.new Object.empty
   channel <- Signal.channel Nothing
   let notify = Signal.send channel
-      modify changed f = atomically $ changed <$ Ref.modify_ f nodeStates
+      modify changed f
+        = launchAff $ atomically $ liftEffect
+        $ changed <$ Ref.modify_ f nodeStates
+
       onChange action = Signal.runSignal $ action <$> Signal.subscribe channel
 
-      atomically action = do
-        reentrancyCount <- Ref.modify (_ + 1) atomicSemaphore
-        changed <- action
-        historyState <- Tuple changed <$> Ref.read nodeStates
-        when (reentrancyCount == 1) do
-          pushHistory $ Argonaut.encodeJson historyState
-        notify changed
-        Ref.modify_ (_ - 1) atomicSemaphore
+      atomically action = Aff.bracket
+        (liftEffect $ Ref.modify (_ + 1) atomicSemaphore)
+        (const $ liftEffect $ Ref.modify_ (_ - 1) atomicSemaphore)
+        \reentrancyCount -> do
+          changed <- action
+          liftEffect do
+            historyState <- Tuple changed <$> Ref.read nodeStates
+            when (reentrancyCount == 1) do
+              pushHistory $ Argonaut.encodeJson historyState
+            notify changed
 
       show hash state = modify (Just hash) (Object.insert hash state)
       hide hash = modify (Just hash) (Object.delete hash)
@@ -190,27 +195,27 @@ makeTools graph nodeConfiguration = do
     makeOpenAllPaths :: Effect (ClickHandler Boolean)
     makeOpenAllPaths = do
       active <- Ref.new false
-      let openAllPaths = traversePaths openPath
-          updateDOM = traversePaths \element ->
+      let openAllPaths = nodeConfiguration.atomically $ Nothing <$ do
+            liftEffect pathElements >>= traverse openPath
+          updateDOM = pathElements >>= traverse \element ->
             Ref.read active >>= if _
               then addClass element "Animate"
               else removeClass element "Animate"
-          traversePaths f = pathElements >>= traverse f
       onKeyDown "Shift" $ Ref.write true active <* updateDOM
       onKeyUp "Shift" $ Ref.write false active <* updateDOM
       pure \click _ -> Ref.read active >>= not >>>
         if _ then pure false else case click of
-          PathClick _ -> openAllPaths $> true
+          PathClick _ -> launchAff openAllPaths $> true
           _ -> pure false
 
     makeOpenPath :: Effect (ClickHandler Boolean)
     makeOpenPath = pure \click _ -> case click of
-      PathClick edge -> openPath edge $> true
+      PathClick edge -> launchAff (openPath edge) $> true
       _ -> pure false
 
-    openPath :: Element -> Effect Unit
-    openPath edge = Element.id edge <#> split (Pattern "_") >>= case _ of
-      [ origin, destination ] -> launchAff do
+    openPath :: Element -> Aff Unit
+    openPath edge = liftEffect (Element.id edge <#> split (Pattern "_")) >>= case _ of
+      [ origin, destination ] -> do
           url <- liftEffect $ getImportId <#> (_ <> "/path")
           result <- Affjax.post Affjax.ResponseFormat.json url
             $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray
@@ -219,7 +224,7 @@ makeTools graph nodeConfiguration = do
             ]
           case result of
             Right response -> case join $ Argonaut.toArray response.body <#> traverse Argonaut.toString of
-              Just path -> liftEffect $ nodeConfiguration.atomically $ Nothing <$ do
+              Just path -> nodeConfiguration.atomically $ liftEffect $ Nothing <$ do
                 for_ (orderOutsideIn path) $ flip nodeConfiguration.show Collapsed
               Nothing -> error "unexpected path results json"
             Left err -> error $ Affjax.printError err
@@ -247,7 +252,7 @@ makeTools graph nodeConfiguration = do
           commit = do
             selection <- Ref.read selectionRef
             when (not $ Object.isEmpty selection) $
-              nodeConfiguration.atomically $ Nothing <$ do
+              launchAff $ nodeConfiguration.atomically $ liftEffect $ Nothing <$ do
                 nodeConfiguration.visible >>= traverse_
                   \hash -> if hash `Object.member` selection
                     then pure unit else nodeConfiguration.hide hash
