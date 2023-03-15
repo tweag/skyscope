@@ -8,6 +8,7 @@
 module Import where
 
 import Common
+import Control.Arrow ((&&&))
 import Control.Category ((>>>))
 import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
 import Control.Concurrent.STM (atomically, retry)
@@ -26,7 +27,7 @@ import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.FileEmbed (embedFile)
 import Data.Foldable (for_)
 import Data.Function ((&))
-import Data.Functor (void, (<&>))
+import Data.Functor ((<&>), void)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (uncons)
@@ -47,9 +48,9 @@ import qualified Foreign.Marshal.Array as Marshal
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf)
 import Model
-import Sqlite (Database)
-import qualified Sqlite
 import Prelude
+import qualified Sqlite
+import Sqlite (Database)
 
 withDatabase :: String -> FilePath -> (Database -> IO a) -> IO a
 withDatabase label path action = timed label $
@@ -136,13 +137,20 @@ indexPathsAsync database = do
 importTargets :: FilePath -> IO ()
 importTargets path = withDatabase "importing targets" path $ \database -> do
   workspace <- maybe "" Text.pack <$> getSkyscopeEnv "WORKSPACE"
-  let parseTarget text = (,text) $
-        case Text.stripPrefix ("# " <> workspace <> "/") text <&> Text.breakOn "/BUILD.bazel:" of
+  external <- maybe "" Text.pack <$> getSkyscopeEnv "OUTPUT_BASE" <&> (<> "/external/")
+  let parseRepository text = case Text.stripPrefix ("# " <> workspace) text of
+        Just text -> ("/", text)
+        Nothing -> case Text.stripPrefix ("# " <> external) text of
+          Just text -> first (("@" <>) >>> (<> "/")) (Text.breakOn "/" text)
           Nothing -> error $ "failed to parse target label:\n" <> Text.unpack text
-          Just (package, text) ->
-            findLine "  name = \"" text & Text.break (== '"') & fst & \name ->
-              "//" <> package <> ":" <> name
-  targets <- map parseTarget <$> getParagraphs
+      parsePackage text =
+        parseRepository text & \(repo, text) -> case Text.stripPrefix "/BUILD" text of
+          Just _ -> (repo <> "/", text)
+          Nothing -> first (repo <>) (Text.breakOn "/BUILD" text)
+      parseLabel text =
+        parsePackage text & \(package, text) ->
+          ((package <> ":") <>) $ fst $ findLine "  name = \"" text & Text.break (== '"')
+  targets <- map (parseLabel &&& id) <$> getParagraphs
   addContext database targets
 
 importActions :: FilePath -> IO ()
