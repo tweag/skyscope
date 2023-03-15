@@ -34,3 +34,9 @@ data Edge = Edge
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
 
 type Graph = (NodeMap Node, Set Edge)
+
+data Context = Context
+  { contextKey :: Text,
+    contextData :: Text
+  }
+  deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)

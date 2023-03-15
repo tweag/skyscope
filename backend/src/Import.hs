@@ -72,7 +72,7 @@ withDatabase label path action = timed label $
 addContext :: Database -> [(Text, Text)] -> IO ()
 addContext database context = do
   let records = context <&> \(k, v) -> [SQLText k, SQLText v]
-  Sqlite.batchInsert database "context" ["node_key", "context_data"] records
+  Sqlite.batchInsert database "context" ["context_key", "context_data"] records
 
 importSkyframe :: FilePath -> IO ()
 importSkyframe path = withDatabase "importing skyframe" path $ \database -> do
@@ -158,8 +158,8 @@ importActions path = withDatabase "importing actions" path $ \database -> do
       groups <&> \group@((label, _) :| _) ->
         NonEmpty.toList $
           indexedActions group <&> \(index, contextData) ->
-            let nodeKey = label <> " " <> Text.pack (show @Integer index)
-             in (nodeKey, contextData)
+            let contextKey = label <> " " <> Text.pack (show @Integer index)
+             in (contextKey, contextData)
 
 getParagraphs :: IO [Text]
 getParagraphs = filter (Text.any (/= '\n')) . Text.splitOn "\n\n" <$> Text.getContents

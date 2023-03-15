@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS path (
 );
 
 CREATE TABLE IF NOT EXISTS context (
-  node_key TEXT,
+  context_key TEXT,
   context_data TEXT,
-  PRIMARY KEY (node_key)
+  PRIMARY KEY (context_key)
 );
