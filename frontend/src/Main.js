@@ -68,6 +68,9 @@ export function updateSaveLink() {
     Array.from(svg.getElementsByClassName("Highlight")).forEach(element => element.classList.remove("Highlight"));
     Array.from(svg.getElementsByTagName("a")).forEach(a => a.removeAttribute("xlink:title"));
     Array.from(svg.getElementsByTagName("title")).forEach(title => title.parentNode.removeChild(title));
+    Array.from(svg.getElementsByTagName("text"))
+        .filter(t => t .parentNode.parentNode.parentNode.classList.contains("Path"))
+        .forEach(path => path.textContent = "");
     const style = document.getElementsByTagName("style")[0].cloneNode(true);
     style.textContent = style.textContent.replaceAll("cursor: pointer", "cursor: auto")
     svg.appendChild(style);

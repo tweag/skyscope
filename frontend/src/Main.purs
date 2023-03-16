@@ -385,7 +385,6 @@ attachGraphRenderer graph nodeConfiguration onClick = do
               Just nodeData -> do
                 let label = join $ Regex.match labelRegex nodeData <#> Array.NonEmpty.head
                     labelRegex = Regex.unsafeRegex "(@\\w+)?//(/?[^/:,}]+)*(:[^/,}]+(/[^/,}]+)*)?" Regex.noFlags
-                pure unit
                 addClass background "Selectable"
                 case text of
                   Just { title, detail } -> do
@@ -416,21 +415,21 @@ attachGraphRenderer graph nodeConfiguration onClick = do
           _ -> pure Nothing
 
       let contextKeys = Array.mapMaybe _.contextKey contents
-      withContext contextKeys \context -> for_ contents \nodeContent -> liftEffect do
-        let contextData = flip Object.lookup context =<< nodeContent.contextKey
-        formattedContent <- formatNodeContent $ Object.fromFoldable
-          [ "type" /\ nodeContent.nodeType
-          , "data" /\ nodeContent.nodeData
-          , "label" /\ fromMaybe "" nodeContent.label
-          , "context" /\ fromMaybe "" contextData
-          ]
-        let traverseFormatted field f =
-              for_ (Object.lookup field formattedContent) \content ->
-                if content == "" then pure unit else f content
-        traverseFormatted "title" nodeContent.setTitle
-        traverseFormatted "detail" nodeContent.setDetail
-        traverseFormatted "tooltip" nodeContent.setTooltip
-        pure unit
+      void $ Aff.forkAff $ withContext contextKeys \context ->
+        for_ contents \nodeContent -> liftEffect do
+          let contextData = flip Object.lookup context =<< nodeContent.contextKey
+          formattedContent <- formatNodeContent $ Object.fromFoldable
+            [ "type" /\ nodeContent.nodeType
+            , "data" /\ nodeContent.nodeData
+            , "label" /\ fromMaybe "" nodeContent.label
+            , "context" /\ fromMaybe "" contextData
+            ]
+          let traverseFormatted field f =
+                for_ (Object.lookup field formattedContent) \content ->
+                  if content == "" then pure unit else f content
+          traverseFormatted "title" nodeContent.setTitle
+          traverseFormatted "detail" nodeContent.setDetail
+          traverseFormatted "tooltip" nodeContent.setTooltip
 
     withContext :: Array String -> (Object String -> Aff Unit) -> Aff Unit
     withContext labels action = do

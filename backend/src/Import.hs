@@ -8,7 +8,6 @@
 module Import where
 
 import Common
-import Control.Applicative ((<|>))
 import Control.Arrow ((&&&))
 import Control.Category ((>>>))
 import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
@@ -26,9 +25,9 @@ import qualified Data.ByteString as BS
 import Data.ByteString.Builder (byteStringHex, toLazyByteString)
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.FileEmbed (embedFile)
-import Data.Foldable (for_)
+import Data.Foldable (asum, for_)
 import Data.Function ((&))
-import Data.Functor ((<&>), void)
+import Data.Functor (void, (<&>))
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (sortOn, uncons)
@@ -49,9 +48,9 @@ import qualified Foreign.Marshal.Array as Marshal
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf)
 import Model
-import Prelude
-import qualified Sqlite
 import Sqlite (Database)
+import qualified Sqlite
+import Prelude
 
 withDatabase :: String -> FilePath -> (Database -> IO a) -> IO a
 withDatabase label path action = timed label $
@@ -160,9 +159,13 @@ importActions :: FilePath -> IO ()
 importActions path = withDatabase "importing actions" path $ \database -> do
   let parseAction paragraph = (findLine "  Target: " paragraph, paragraph)
       indexedActions group = (0 :| [1 ..]) `NonEmpty.zip` (snd <$> group)
-      filterActions = filter $ \paragraph -> isJust $
-        Text.stripPrefix "action " paragraph <|>
-        Text.stripPrefix "runfiles " paragraph
+      filterActions = filter $ \paragraph ->
+        isJust $
+          asum
+            [ Text.stripPrefix "action " paragraph,
+              Text.stripPrefix "runfiles " paragraph,
+              Text.stripPrefix "BazelCppSemantics" paragraph
+            ]
   groups <-
     NonEmpty.groupBy (\x y -> fst x == fst y)
       . sortOn fst

@@ -20,6 +20,7 @@ import Control.Monad.Trans.Reader (ReaderT (..))
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Json
 import Data.Bitraversable (bitraverse)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.ByteUnits (ByteUnit (..), ByteValue (..), getAppropriateUnits, getShortHand)
 import Data.Either (fromRight)
@@ -32,7 +33,6 @@ import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import qualified Data.Text.IO as Text
 import qualified Data.Text.Lazy as LazyText
 import Data.Time.Clock (UTCTime, getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
@@ -240,27 +240,27 @@ server port = withImportDb $ \importDatabase -> do
                                   _ -> error "unexpectedly found multiple main.js files"
                         )
                    )
-          Just path -> Text.readFile path
+          Just path -> Text.decodeUtf8 <$> BS.readFile path
 
     indexJs :: IO Text
     indexJs =
       getSkyscopeEnv "INDEX_JS" >>= \case
         Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/index.js")
-        Just path -> Text.readFile path
+        Just path -> Text.decodeUtf8 <$> BS.readFile path
 
     formatJs :: IO Text
     formatJs = do
       functionBody <-
         getSkyscopeEnv "FORMAT_JS" >>= \case
           Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/format.js")
-          Just path -> Text.readFile path
+          Just path -> Text.decodeUtf8 <$> BS.readFile path
       pure $ "function _formatNodeContent(node) { " <> functionBody <> " };"
 
     themeCss :: IO Text
     themeCss =
       getSkyscopeEnv "THEME_CSS" >>= \case
         Nothing -> pure $ Text.decodeUtf8 $(embedFile "frontend/src/theme.css")
-        Just path -> Text.readFile path
+        Just path -> Text.decodeUtf8 <$> BS.readFile path
 
     badRequest :: String -> ActionM a
     badRequest = Web.raiseStatus badRequest400 . LazyText.pack
