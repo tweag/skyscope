@@ -8,9 +8,9 @@ const title = function () {
         case "ActionExecution":
             match = node.context.match("(?<=Mnemonic: )\\w+");
             if (match != null) {
-                const truncated = match[0].slice(0, 20);
+                const truncated = match[0].slice(0, 25);
                 const ellipsis = truncated == match[0] ? "" : "…";
-                return `Action: ${truncated + ellipsis}`;
+                return truncated + ellipsis;
             }
             break;
     }
@@ -37,6 +37,7 @@ const detail = function () {
             }
             break;
         case "BzlLoad":
+        case "ActionEnvironmentVariable":
         case "ClientEnvironmentVariable":
         case "ContainingPackageLookup":
         case "IgnoredPackagePrefixes":
