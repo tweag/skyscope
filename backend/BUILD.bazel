@@ -30,6 +30,7 @@ haskell_binary(
         "//frontend:src/theme.css",
         "//backend:src/schema.sql",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         ":base",
         ":path",

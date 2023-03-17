@@ -51,7 +51,6 @@ import qualified Render
 import Sqlite (Database)
 import qualified Sqlite
 import System.Directory (createDirectoryIfMissing, removeFile)
-import System.Environment (getEnv)
 import System.FilePath.Find (filePath, find, (~~?))
 import System.IO (BufferMode (..), IOMode (..), hSetBuffering, hSetEncoding, stderr, stdout, utf8, withFile)
 import System.IO.Error (isDoesNotExistError)
@@ -64,10 +63,10 @@ import Prelude
 
 server :: Int -> IO ()
 server port = withImportDb $ \importDatabase -> do
-  homeDir <- getHomeDirectory
-  let pidFile = homeDir <> "/server.pid"
+  dataDir <- getDataDirectory
+  let pidFile = dataDir <> "/server.pid"
   writeFile pidFile =<< show <$> getProcessID
-  withFile (homeDir <> "/server.log") AppendMode $ \logHandle -> do
+  withFile (dataDir <> "/server.log") AppendMode $ \logHandle -> do
     let redirect h = do
           hDuplicateTo logHandle h
           hSetBuffering h LineBuffering
@@ -284,9 +283,9 @@ server port = withImportDb $ \importDatabase -> do
               "</html>"
             ]
 
-getHomeDirectory :: IO FilePath
-getHomeDirectory = do
-  dir <- getEnv "HOME" <&> (<> "/.skyscope")
+getDataDirectory :: IO FilePath
+getDataDirectory = do
+  dir <- getSkyscopeEnv "DATA" <&> fromMaybe (error "data dir")
   createDirectoryIfMissing True dir
   pure dir
 
@@ -391,7 +390,7 @@ listImports importDatabase = do
 
 withImportDb :: (Database -> IO a) -> IO a
 withImportDb action = do
-  dir <- getHomeDirectory
+  dir <- getDataDirectory
   let path = dir <> "/imports.sqlite"
   Sqlite.withDatabase path $ \database -> do
     createSchema database
