@@ -1,51 +1,47 @@
-div#imports {
-    margin: 10px 10px;
-    overflow: hidden;
-    pointer-events: auto;
-}
 
-div.import {
+div.Import {
     align-items: center;
     color: hsl(0, 0%, 25%);
     display: flex;
     font-family: monospace;
-    font-size: 16px;
+    font-size: 14px;
     padding: 0px 30px;
     text-decoration: none;
 }
 
-div.import:hover a {
+div.Import:hover a {
     font-weight: bold;
 }
 
-div.import a:active {
+div.Import a:active {
     color: hsl(0, 0%, 0%);
 }
 
-div.import a {
+div.Import a {
     color: hsl(0, 0%, 25%);
     text-decoration: none;
 }
 
-div.import span {
+div.Import span {
     padding: 10px 10px;
 }
 
-div.import span.importPath {
-    font-size: 13px;
+div.Import span.Tag {
     flex: 1 1;
+    text-align: center;
+    font-weight: bold;
 }
 
-div.import input.delete {
+div.Import input.Delete {
     width: 16px;
     height: 16px;
 }
 
-div.button {
+div.Button {
     text-align: right;
 }
 
-div.button input {
+div.Button input {
     padding: 5px 10px;
     margin: 5px 0px;
 }

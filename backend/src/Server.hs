@@ -119,24 +119,17 @@ server port = withImportDb $ \importDatabase -> do
         indexJs <- liftIO indexJs
         html ("<script>" <> indexJs <> "</script>") $
           Text.unlines
-            [ "<div id=\"imports\">",
+            [ "<div id=\"Imports\">",
               Text.unlines $
                 imports <&> \Import {..} ->
                   let importIdText = Text.pack $ show importId
-                      span field value =
-                        "<span class=\"import"
-                          <> field
-                          <> "\">"
-                          <> value
-                          <> "</span>"
-                   in "<div id=\"" <> importIdText <> "\" class=\"import\">"
+                      anchor content = "<a href=\"" <> importIdText <> "\">" <> content <> "</a>"
+                      span field content = "<span class=\"" <> field <> "\">" <> content <> "</span>"
+                   in "<div id=\"" <> importIdText <> "\" class=\"Import\">"
                         <> Text.concat
                           [ span "Created" $ Text.pack $ formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" importCreated,
-                            span "Path" $
-                              "<a href=\"" <> importIdText
-                                <> "\">"
-                                <> Text.pack importPath,
-                            span "Tag" importTag <> "</a>",
+                            span "Path" $ anchor $ Text.pack importPath,
+                            span "Tag" $ anchor $ importTag,
                             span "Counts" $ case importCounts of
                               Nothing -> "&lt;unable to open import&gt;"
                               Just Counts {..} ->
@@ -151,10 +144,10 @@ server port = withImportDb $ \importDatabase -> do
                                 getShortHand $
                                   getAppropriateUnits $
                                     ByteValue (fromIntegral importDiskUsage) Bytes,
-                            "<input type=\"checkbox\" class=\"delete\">"
+                            "<input type=\"checkbox\" class=\"Delete\">"
                           ]
                         <> "</div>",
-              "  <div class=\"button\"><input id=\"button\" type=\"button\" value=\"Select All\"></div>",
+              "  <div class=\"Button\"><input id=\"button\" type=\"button\" value=\"Select All\"></div>",
               "</div>"
             ]
 
