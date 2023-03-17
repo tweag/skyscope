@@ -326,7 +326,16 @@ attachGraphRenderer graph nodeConfiguration onClick = do
       render >>= case _ of
         Left statusCode -> pure $ Left statusCode
         Right svg -> Right unit <$ do
-          decorateGraph svg \click event -> do
+          let updateDocument = do
+                removeAllChildren graph
+                appendElement svg graph
+                for_ changed $ getElementById >=> traverse \element -> do
+                  addClass element "Highlight"
+                  void $ Timer.setTimeout (2 * animationDuration) do
+                    scrollIntoView element
+                    void $ Timer.setTimeout animationDuration $
+                      removeClass element "Highlight"
+          decorateGraph svg updateDocument \click event -> do
             handled <- onClick click event
             if handled then pure unit else case click of
               NodeClick element -> do
@@ -338,15 +347,6 @@ attachGraphRenderer graph nodeConfiguration onClick = do
                     then nodeConfiguration.show hash Expanded
                     else nodeConfiguration.show hash Collapsed
               _ -> pure unit
-          liftEffect do
-            removeAllChildren graph
-            appendElement svg graph
-            for_ changed $ getElementById >=> traverse \element -> do
-              addClass element "Highlight"
-              void $ Timer.setTimeout (2 * animationDuration) do
-                scrollIntoView element
-                void $ Timer.setTimeout animationDuration $
-                  removeClass element "Highlight"
 
   where
     makeRenderer :: Effect (Aff (Either StatusCode Element))
@@ -362,11 +362,8 @@ attachGraphRenderer graph nodeConfiguration onClick = do
             maybe (error "svg element not found") (pure <<< Right) svg
           status -> pure $ Left status
 
-    --fetchNodeContext :: Effect Unit
-    --fetchNodeContext = undefined
-
-    decorateGraph :: Element -> ClickHandler Unit -> Aff Unit
-    decorateGraph svg handleClick = do
+    decorateGraph :: Element -> Effect Unit -> ClickHandler Unit -> Aff Unit
+    decorateGraph svg updateDocument handleClick = do
       liftEffect $ getElementsByClassName "edge" svg >>= traverse_ \edge -> do
         containsClass edge "Path" >>= not >>> if _ then pure unit else do
           listener <- EventTarget.eventListener \event ->
@@ -414,8 +411,10 @@ attachGraphRenderer graph nodeConfiguration onClick = do
               Nothing -> pure Nothing
           _ -> pure Nothing
 
+      liftEffect updateDocument
+
       let contextKeys = Array.mapMaybe _.contextKey contents
-      void $ Aff.forkAff $ withContext contextKeys \context ->
+      withContext contextKeys \context -> do
         for_ contents \nodeContent -> liftEffect do
           let contextData = flip Object.lookup context =<< nodeContent.contextKey
           formattedContent <- formatNodeContent $ Object.fromFoldable
@@ -430,6 +429,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
           traverseFormatted "title" nodeContent.setTitle
           traverseFormatted "detail" nodeContent.setDetail
           traverseFormatted "tooltip" nodeContent.setTooltip
+
 
     withContext :: Array String -> (Object String -> Aff Unit) -> Aff Unit
     withContext labels action = do
@@ -786,7 +786,7 @@ createTray nodeConfiguration renderState = do
       status <- createElement "span" "Status" $ Just div
       setTextContent (fromRight "" $ formatNumber "0,0" elapsed <#> (_ <> "ms")) status
       saveLink <- createElement "a" "Save" $ Just div
-      void $ createIcon "💾" "Save image" saveLink
+      void $ createIcon "💾" "Save image" saveLink  -- TODO: Fix saveLink not having additional context (don't break animation)
       setCheckpoint =<< Ref.read checkpointCandidate
       updateSaveLink
 
