@@ -4,6 +4,12 @@ const title = function () {
         case "ConfiguredTarget":
         case "TransitiveTarget":
         case "TargetCompletion":
+            match = node.context.match("^\\w+");
+            if (match != null) {
+                const truncated = match[0].slice(0, 25);
+                const ellipsis = truncated == match[0] ? "" : "…";
+                return truncated + ellipsis;
+            }
             break;
         case "ActionExecution":
             match = node.context.match("(?<=Mnemonic: )\\w+");

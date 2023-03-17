@@ -1,6 +1,6 @@
 window.onload = function () {
     const checkboxes = [];
-    for (const checkbox of document.getElementsByClassName("delete")) {
+    for (const checkbox of document.getElementsByClassName("Delete")) {
         checkboxes.push(checkbox);
     }
     const getCheckedCount = () => checkboxes.filter(c => c.checked).length;
