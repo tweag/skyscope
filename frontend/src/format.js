@@ -1,22 +1,24 @@
+const truncate = (content, n) => {
+    const truncated = content.slice(0, n);
+    const ellipsis = truncated == content ? "" : "…";
+    return truncated + ellipsis;
+};
+
 const title = function () {
     var match = null;
     switch (node.type) {
         case "ConfiguredTarget":
         case "TransitiveTarget":
         case "TargetCompletion":
-            match = node.context.match("^\\w+");
+            match = node.context.match("(?<=\n)\\w+(?=\\(\n)");
             if (match != null) {
-                const truncated = match[0].slice(0, 25);
-                const ellipsis = truncated == match[0] ? "" : "…";
-                return truncated + ellipsis;
+                return truncate(match[0], 25);
             }
             break;
         case "ActionExecution":
             match = node.context.match("(?<=Mnemonic: )\\w+");
             if (match != null) {
-                const truncated = match[0].slice(0, 25);
-                const ellipsis = truncated == match[0] ? "" : "…";
-                return truncated + ellipsis;
+                return truncate(match[0], 25);
             }
             break;
     }
