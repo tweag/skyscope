@@ -198,7 +198,7 @@ makeTools graph nodeConfiguration = do
       let openAllPaths = nodeConfiguration.atomically $ Nothing <$ do
             liftEffect pathElements >>= traverse openPath
           updateDOM = pathElements >>= traverse \element ->
-            Ref.read active >>= if _  -- TODO: Fix bug where animation gets stuck-on when browser loses focus with shift held
+            Ref.read active >>= if _
               then addClass element "Animate"
               else removeClass element "Animate"
       onKeyDown "Shift" $ Ref.write true active <* updateDOM
@@ -381,7 +381,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
             Element.getAttribute "xlink:title" anchor >>= case _ of
               Just nodeData -> do
                 let label = join $ Regex.match labelRegex nodeData <#> Array.NonEmpty.head
-                    labelRegex = Regex.unsafeRegex "(@\\w+)?//(/?[^/:,}]+)*(:[^/,}]+(/[^/,}]+)*)?" Regex.noFlags
+                    labelRegex = Regex.unsafeRegex "(@\\w+)?//(/?[^/:,}\\]]+)*(:[^/,}\\]]+(/[^/,}\\]]+)*)?" Regex.noFlags
                 addClass background "Selectable"
                 case text of
                   Just { title, detail } -> do
@@ -786,7 +786,7 @@ createTray nodeConfiguration renderState = do
       status <- createElement "span" "Status" $ Just div
       setTextContent (fromRight "" $ formatNumber "0,0" elapsed <#> (_ <> "ms")) status
       saveLink <- createElement "a" "Save" $ Just div
-      void $ createIcon "💾" "Save image" saveLink  -- TODO: Fix saveLink not having additional context (don't break animation)
+      void $ createIcon "💾" "Save image" saveLink
       setCheckpoint =<< Ref.read checkpointCandidate
       updateSaveLink
 

@@ -1,4 +1,5 @@
 load("@com_github_bazelbuild_buildtools//buildifier:def.bzl", "buildifier", "buildifier_test")
+load("//:package.bzl", "package_binary")
 
 buildifier(
     name = "buildifier",
@@ -10,4 +11,11 @@ buildifier_test(
         "**/*.bazel",
         "**/*.bzl",
     ]),
+)
+
+package_binary(
+    name = "skyscope",
+    binary = "//backend:skyscope",
+    description = "Skyscope",
+    entrypoint = "//:entrypoint.sh",
 )

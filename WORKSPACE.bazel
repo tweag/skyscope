@@ -182,3 +182,18 @@ http_archive(
         "https://github.com/bazelbuild/buildtools/archive/refs/tags/4.2.2.tar.gz",
     ],
 )
+
+nixpkgs_package(
+    name = "glibc.bin",
+    repository = "@nixpkgs",
+)
+
+nixpkgs_package(
+    name = "makeself",
+    build_file_content = """
+exports_files([
+    "bin/makeself",
+    "share/makeself-2.4.5/makeself-header.sh",
+])""",
+    repository = "@nixpkgs",
+)
