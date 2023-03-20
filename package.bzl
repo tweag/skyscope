@@ -32,10 +32,11 @@ def _package_binary_impl(ctx):
             output = output.path,
         ),
     )
-    return [DefaultInfo(files = depset([output]))]
+    return [DefaultInfo(executable = output)]
 
 package_binary = rule(
     implementation = _package_binary_impl,
+    executable = True,
     attrs = {
         "binary": attr.label(
             allow_single_file = True,

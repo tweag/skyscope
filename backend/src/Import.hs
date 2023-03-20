@@ -88,6 +88,7 @@ importSkyframe path = withDatabase "importing skyframe" path $ \database -> do
     Text.getContents <&> Parser.parseOnly parser >>= \case
       Left err -> error $ "failed to parse skyframe graph: " <> err
       Right graph -> pure graph
+  putStrLn $ "node count = " <> show (length nodes) <> ", edge count = " <> show (length edges)
   let assignIndex node = gets (,node) <* modify (+ 1)
       indexedNodes = evalState (for nodes assignIndex) 1
       coerceMaybe = fromMaybe $ error "parser produced an edge with an unknown node"
