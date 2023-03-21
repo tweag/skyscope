@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-BIN_DIR="$PWD"
-cd "$USER_PWD"
-bazel info 1>/dev/null
+set -euxo pipefail
 
 while [[ "${1:-}" ]]
   do case "$1" in
@@ -27,10 +23,20 @@ export SKYSCOPE_OUTPUT_BASE="$(bazel info output_base)"
 export SKYSCOPE_DATA="${SKYSCOPE_DATA:-$HOME/.skyscope}"
 export BAZEL_VERSION="$(bazel version | grep -Po '(?<=Build label: ).*')"
 
-run-skyscope() {
-  "$BIN_DIR/ld-linux-x86-64.so.2" --library-path "$BIN_DIR" \
-    "$BIN_DIR/skyscope" +RTS -N -RTS "$@"
+build-skyscope() {
+  # Users may not have enabled flakes in nix.conf so do it explicitly via cli args.
+  nix develop \
+    --extra-experimental-features flakes \
+    --extra-experimental-features nix-command \
+    --command bazel build //backend:skyscope
 }
+
+run-skyscope() {(
+  cd "${BASH_SOURCE[0]%/bin/skyscope}"
+  SKYSCOPE_BIN="bazel-bin/backend/skyscope"
+  [[ -x "$SKYSCOPE_BIN" ]] || build-skyscope
+  "$SKYSCOPE_BIN" +RTS -N -RTS "$@"
+)}
 
 run-bazel() {
   bazel "$@" || {
