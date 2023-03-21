@@ -4,43 +4,17 @@ A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/refere
 
 ![skyscope-demo](https://github.com/tweag/skyscope/blob/c27f550ed71e50841d19656ca7dc6c89b9e7217d/img/skyscope-demo.gif)
 
-## Installing
-
-### Building from Source
-
-To build a Skyscope binary yourself from source:
-
-```bash
-# Clone this repository
-git clone https://github.com/tweag/skyscope.git
-cd skyscope
-
-# Run bazel build command within a nix develop shell
-nix develop --command bazel build //:skyscope
-```
-
-This should produce a `bazel-bin/skyscope` binary. To play around with
-Skyscope, you can temporarily add the `bazel-bin` directory to your `PATH`:
-
-```bash
-export PATH="$PWD/bazel-bin:$PATH"
-```
-
-Or you can copy `bazel-bin/skyscope` to somewhere more permanent and update
-your PATH variable appropriately (e.g. `~/.local/bin/skyscope`).
-
-### Download a Prebuilt Binary
-
-TODO
-
 ## Usage
 
 ### Importing a graph
 
-Assuming `skyscope` is in your `PATH`, simply run `skyscope` in the workspace
-of the Skyframe graph you wish to import from:
-
 ```bash
+# Clone this repository
+git clone https://github.com/tweag/skyscope.git
+
+# Add the wrapper to your PATH variable
+export PATH="$PWD/skyscope/bin:$PATH"
+
 # Run a bazel command and import the graph into Skyscope
 cd some-project && bazel build //some:target && skyscope
 ```
