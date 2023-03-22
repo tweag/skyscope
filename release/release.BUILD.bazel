@@ -1,0 +1,20 @@
+load(":loader.bzl", "entrypoint", "ld_binary")
+
+entrypoint(
+    name = "import",
+    src = "import.sh",
+    binary = ":skyscope",
+    includes = ["server.sh"],
+)
+
+entrypoint(
+    name = "server",
+    src = "server.sh",
+    binary = ":skyscope",
+)
+
+ld_binary(
+    name = "skyscope",
+    binary = "closure/skyscope",
+    libraries = glob(["closure/*.so.*"]),
+)

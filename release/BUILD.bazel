@@ -1,0 +1,8 @@
+load(":package.bzl", "package_release")
+
+package_release("//backend:skyscope")
+
+exports_files([
+    "import.sh",
+    "server.sh",
+])

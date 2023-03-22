@@ -15,3 +15,5 @@
 /output
 /result
 /result-*
+/release/bin/
+/release/lib/
