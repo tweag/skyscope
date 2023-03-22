@@ -2,7 +2,6 @@ exports_files([
     "src/index.js",
     "src/format.js",
     "src/theme.css",
-    "spago.BUILD.bazel",
 ])
 
 genrule(

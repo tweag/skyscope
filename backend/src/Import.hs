@@ -72,8 +72,6 @@ withDatabase label path action = timed label $
 
 addContext :: Database -> [(Text, Text)] -> IO ()
 addContext database context = do
-  --for_ context $ \(contextKey, contextData) -> do
-  --  putStrLn $ "\x1b[1;36m" <> Text.unpack contextKey <> "\x1b[0m  " -- <> Text.unpack contextData
   let records = context <&> \(k, v) -> [SQLText k, SQLText v]
   Sqlite.batchInsert database "context" ["context_key", "context_data"] records
 
