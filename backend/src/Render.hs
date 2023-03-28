@@ -225,9 +225,9 @@ findComponents edges nodes =
             then dfs stack'
             else do
               modify $ Map.insert node value
-              case Map.lookup node neighbourMap of
-                Just neighbours -> (next :) <$> dfs (neighbours : stack')
-                Nothing -> dfs stack'
+              (next :) <$> case Map.lookup node neighbourMap of
+                Just neighbours -> dfs (neighbours : stack')
+                Nothing -> error "invariant violation"
    in catMaybes $
         takeWhile isJust $
           flip evalState Map.empty $
