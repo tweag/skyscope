@@ -5,12 +5,14 @@ entrypoint(
     src = "import.sh",
     binary = ":skyscope",
     includes = ["server.sh"],
+    visibility = ["//visibility:public"],
 )
 
 entrypoint(
     name = "server",
     src = "server.sh",
     binary = ":skyscope",
+    visibility = ["//visibility:public"],
 )
 
 ld_binary(

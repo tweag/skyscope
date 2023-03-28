@@ -1,6 +1,14 @@
 load(":package.bzl", "package_release")
 
-package_release("//backend:skyscope")
+package_release(
+    "//backend:skyscope",
+    {
+        "@platforms//os:linux": "6c0637ab33f7408435833b9b21f8cbdf3dcc2c39c35b89c45a49bd3d3cc59e96",
+        "@platforms//os:macos": "0000000000000000000000000000000000000000000000000000000000000000",
+    },
+    #"https://github.com/tweag/skyscope/releases/download/v0.0.0",
+    "file:///skyscope/bazel-bin/release",
+)
 
 exports_files([
     "import.sh",

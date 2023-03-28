@@ -58,9 +58,9 @@ assemble_closure = rule(
     },
 )
 
-def package_release(binary):
+def package_release(binary, platforms, url_base):
     assemble_closure(
-        name = "package/closure",
+        name = "platform/closure",
         binary = binary,
         tools = select({
             "@platforms//os:linux": {
@@ -72,23 +72,74 @@ def package_release(binary):
             },
         }),
     )
-    copy_file("package/import", "import.sh", "package/import.sh")
-    copy_file("package/server", "server.sh", "package/server.sh")
-    copy_file("package/loader", "loader.bzl", "package/loader.bzl")
-    copy_file("package/BUILD", "release.BUILD.bazel", "package/BUILD.bazel")
-    write_file("package/WORKSPACE", "package/WORKSPACE.bazel", content = [
-        "workspace(name = \"skyscope\")\n",
-    ])
+    copy_file("platform/import", "import.sh", "platform/import.sh")
+    copy_file("platform/server", "server.sh", "platform/server.sh")
+    copy_file("platform/loader", "loader.bzl", "platform/loader.bzl")
+    copy_file("platform/BUILD", "platform.BUILD.bazel", "platform/BUILD.bazel")
+    write_file("platform/WORKSPACE", "platform/WORKSPACE.bazel", content = ["workspace(name = \"skyscope\")\n"])
     pkg_zip(
-        name = "archive",
-        out = "skyscope.zip",
-        strip_prefix = "/release/package",
+        name = "platform-archive",
+        out = "skyscope-$PLATFORM.zip",
+        strip_prefix = "/release/platform",
         srcs = [
-            ":package/closure",
-            ":package/import",
-            ":package/server",
-            ":package/loader",
-            ":package/BUILD",
-            ":package/WORKSPACE",
+            ":platform/closure",
+            ":platform/import.sh",
+            ":platform/server.sh",
+            ":platform/loader.bzl",
+            ":platform/BUILD.bazel",
+            ":platform/WORKSPACE.bazel",
         ],
     )
+
+    for_platforms = lambda str, **kwargs: [
+        str.format(
+            platform = Label(os).name,
+            sha256 = sha256,
+            **kwargs
+        )
+        for os, sha256 in platforms.items()
+    ]
+    write_file(
+        "alias/repository",
+        "alias/repository.bzl",
+        content = [
+            "load(\"@bazel_tools//tools/build_defs/repo:http.bzl\", \"http_archive\")",
+            "def configure_skyscope():",
+        ] + for_platforms("""
+            http_archive(
+                name = "skyscope_{platform}",
+                urls = ["{url_base}/skyscope-{platform}.zip"],
+                sha256="{sha256}",
+            )
+        """, url_base = url_base),
+    )
+    make_alias = lambda name: "\n".join([
+        "alias(name = \"{}\", actual = select({{".format(name),
+        ",".join(for_platforms(
+            "\"@platforms//os:{platform}\": \"@skyscope_{platform}//:{name}\"",
+            name = name,
+        )),
+        "}))",
+    ])
+    write_file("alias/BUILD", "alias/BUILD.bazel", content = [make_alias("import"), make_alias("server")])
+    write_file("alias/WORKSPACE", "alias/WORKSPACE.bazel", content = ["workspace(name = \"skyscope\")\n"])
+    pkg_zip(
+        name = "alias-archive",
+        out = "skyscope.zip",
+        strip_prefix = "/release/alias",
+        srcs = [
+            ":alias/repository.bzl",
+            ":alias/BUILD.bazel",
+            ":alias/WORKSPACE.bazel",
+        ],
+    )
+
+    #copy_file("platform/import", "import.sh", "platform/import.sh")
+
+    copy_file(
+        "skyscope-linux",
+        "skyscope-$PLATFORM.zip",
+        "skyscope-linux.zip",
+    )
+
+# https://github.com/tweag/skyscope/releases/download/v0.0.0/skyscope-macos.zip
