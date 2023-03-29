@@ -8,7 +8,7 @@ def _entrypoint_impl(ctx):
         substitutions = {
             "#entrypoint": """
                 export RUNFILES="$PWD"
-                cd "$BUILD_WORKSPACE_DIRECTORY"
+                cd "${{SKYSCOPE_WORKSPACE:-$BUILD_WORKSPACE_DIRECTORY}}"
                 export SKYSCOPE_WORKSPACE="$(bazel info workspace)"
                 export SKYSCOPE_OUTPUT_BASE="$(bazel info output_base)"
                 export SKYSCOPE_DATA="${{SKYSCOPE_DATA:-$HOME/.skyscope}}"
