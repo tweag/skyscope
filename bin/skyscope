@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 set -eu
 
-case "$1" in
-    import)
-esac
+export SKYSCOPE_WORKSPACE="$PWD"
+cd "${BASH_SOURCE[0]%/bin/skyscope}"
 
+TARGET_NAME="${1?usage: skyscope [import|server]}"
+shift
 
-#  cd "${BASH_SOURCE[0]%/bin/skyscope}"
-#  SKYSCOPE_BIN="bazel-bin/backend/skyscope"
-#  [[ -x "$SKYSCOPE_BIN" ]] || build-skyscope
-#  "$SKYSCOPE_BIN" +RTS -N -RTS "$@"
-
-
+bazel run "//:$TARGET_NAME" -- "$@"

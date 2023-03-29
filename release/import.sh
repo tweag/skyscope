@@ -3,12 +3,15 @@ set -euo pipefail
 
 #entrypoint
 
+SKYSCOPE_QUERY='deps(//...)'
+SKYSCOPE_AQUERY='deps(//...)'
+
 while [[ "${1:-}" ]]
   do case "$1" in
-    --query) export SKYSCOPE_QUERY="deps(//...)" ;;
-    --aquery) export SKYSCOPE_AQUERY='deps(//...)' ;;
-    --query=*) export SKYSCOPE_QUERY="${1#--query=}" ;;
-    --aquery=*) export SKYSCOPE_AQUERY="${1#--aquery=}" ;;
+    --no-query) SKYSCOPE_QUERY='' ;;
+    --no-aquery) SKYSCOPE_AQUERY='' ;;
+    --query=*) SKYSCOPE_QUERY="${1#--query=}" ;;
+    --aquery=*) SKYSCOPE_AQUERY="${1#--aquery=}" ;;
     *)
       echo "invalid arg: $1"
       exit 1

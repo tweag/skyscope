@@ -75,17 +75,20 @@ def package_release(binary, platforms, url_base):
     copy_file("platform/import", "import.sh", "platform/import.sh")
     copy_file("platform/server", "server.sh", "platform/server.sh")
     copy_file("platform/loader", "loader.bzl", "platform/loader.bzl")
+    copy_file("platform/wrapper", "//bin:skyscope", "platform/bin/skyscope")
     copy_file("platform/BUILD", "platform.BUILD.bazel", "platform/BUILD.bazel")
     write_file("platform/WORKSPACE", "platform/WORKSPACE.bazel", content = ["workspace(name = \"skyscope\")\n"])
     pkg_zip(
         name = "platform-archive",
         out = "skyscope-$PLATFORM.zip",
         strip_prefix = "/release/platform",
+        package_dir = "/skyscope",
         srcs = [
             ":platform/closure",
             ":platform/import.sh",
             ":platform/server.sh",
             ":platform/loader.bzl",
+            ":platform/bin/skyscope",
             ":platform/BUILD.bazel",
             ":platform/WORKSPACE.bazel",
         ],
@@ -116,7 +119,7 @@ def package_release(binary, platforms, url_base):
     make_alias = lambda name: "\n".join([
         "alias(name = \"{}\", actual = select({{".format(name),
         ",".join(for_platforms(
-            "\"@platforms//os:{platform}\": \"@skyscope_{platform}//:{name}\"",
+            "\"@platforms//os:{platform}\": \"@skyscope_{platform}//skyscope:{name}\"",
             name = name,
         )),
         "}))",
