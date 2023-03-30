@@ -1,4 +1,5 @@
 load("@com_github_bazelbuild_buildtools//buildifier:def.bzl", "buildifier", "buildifier_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("//release:loader.bzl", "entrypoint", "ld_binary")
 
 entrypoint(
@@ -25,3 +26,48 @@ buildifier_test(
         "**/*.bzl",
     ]),
 )
+
+sh_binary(
+    name = "update-readme-toc",
+    srcs = [":update-toc.sh"],
+    data = [":extract-toc.sed"],
+    args = ["$(execpath :extract-toc.sed)"],
+)
+
+write_file(
+    name = "write-update-toc.sh",
+    out = "update-toc.sh",
+    content = [
+        "set -eux",
+        "SANDBOX=$PWD",
+        "cd $BUILD_WORKSPACE_DIRECTORY",
+        "(",
+        "    sed -n '1,/BEGIN-TOC/ p' README.md",
+        "    sed -n -f ${1?missing script arg} README.md",
+        "    sed -n '/END-TOC/,$ p' README.md",
+        ") >$SANDBOX/README.md",
+        "mv -v $SANDBOX/README.md .",
+    ]
+)
+
+write_file(
+    name = "write-extract-toc",
+    out = "extract-toc.sed",
+    content = [
+        "/END-TOC/,$ {",
+        "    s/^##\\(#*\\) /\\1- /",
+        "    T",
+        "    s/#/  /",
+        "    h",
+        "    s/\\s*- \\(.*\\)/\\L\\1/",
+        "    s/[`]//g",
+        "    s/ /-/g",
+        "    s/.*/(#&)/",
+        "    x",
+        "    G",
+        "    s/- \\([^\\n]*\\)\\n\\(.*\\)/- [\\1]\\2/",
+        "    p",
+        "}",
+    ],
+)
+
