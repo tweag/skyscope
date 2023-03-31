@@ -7,9 +7,6 @@ const truncate = (content, n) => {
 const title = function () {
     var match = null;
     switch (node.type) {
-        case "Artifact":
-        case "ArtifactNestedSet":
-            return "depset";
         case "ConfiguredTarget":
         case "TransitiveTarget":
         case "TargetCompletion":
