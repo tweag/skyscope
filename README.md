@@ -35,6 +35,11 @@ A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/refere
 
 There are a few different ways to install and run Skyscope. Pick whichever suits best.
 
+_While the repository is private to Tweag, only the [Build and run it
+from source](#build-and-run-it-from-source-requires-nix) method is supported._
+
+<strike>
+
 ### Add it to your `WORKSPACE` file
 
 This method is recommended if you want to quickly try Skyscope with minimal
@@ -76,7 +81,9 @@ unzip ~/Downloads/skyscope-linux.zip -d ~/.local/
 export PATH="$HOME/.local/skyscope/bin:$PATH"
 ```
 
-### Build and run it from source (TODO: nix develop for purs etc?)
+</strike>
+
+### Build and run it from source (requires [Nix](https://nixos.org/download.html))
 
 Finally, the git repository contains a [wrapper
 script](https://github.com/benradf/skyscope/blob/readme/bin/skyscope) that
@@ -160,8 +167,8 @@ the nodes on the dependency path visible by clicking _Open path_:
 &lt;🏞 _Image with mouse hovering over Open Path_&gt;
 
 This feature can be used to discover how a particular target depends on
-another, or how an action depends on a file. It works much the same as a
-`somepath` Bazel query.
+another, or how an action depends on a file. It works much like a `somepath`
+Bazel query.
 
 ### Hiding visible nodes
 
