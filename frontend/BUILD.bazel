@@ -15,7 +15,10 @@ genrule(
     cmd = """
         # Resolve labels to absolute paths.
         MAIN_JS="$$(realpath $@)"
+        JQ="$$(realpath "$(execpath @jq.bin//:bin/jq)")"
         SPAGO="$$(realpath "$(execpath @spago//:bin/spago)")"
+        PATH="$$(dirname $$(realpath "$(execpath @esbuild//:bin/esbuild)")):$$PATH"
+        PATH="$$(dirname $$(realpath "$(execpath @purescript//:bin/purs)")):$$PATH"
         PACKAGES="$$(dirname "$$(realpath "$(execpath @spago_packages//:BUILD.bazel)")")"
         mkdir -p "$$(dirname "$$MAIN_JS")"
 
@@ -25,12 +28,17 @@ genrule(
         RESULT="$$("$$SPAGO" -c skip bundle-app -t "$$MAIN_JS" -u --json-errors)" || true
 
         # Fail if there were any warnings or errors.
-        count() { jq ".$$1 | length" <<<"$$RESULT"; }
+        count() { "$$JQ" ".$$1 | length" <<<"$$RESULT"; }
         if [[ "$$(count warnings)" -ne 0 || "$$(count errors)" -ne 0 ]]; then
-            jq . <<<"$$RESULT" 1>&2
+            "$$JQ" . <<<"$$RESULT" 1>&2
             exit 1
         fi
     """,
-    tools = ["@spago//:bin/spago"],
+    tools = [
+        "@esbuild//:bin/esbuild",
+        "@jq.bin//:bin/jq",
+        "@purescript//:bin/purs",
+        "@spago//:bin/spago",
+    ],
     visibility = ["//visibility:public"],
 )

@@ -112,8 +112,22 @@ nixpkgs_local_repository(
 )
 
 nixpkgs_package(
+    name = "esbuild",
+    repository = "@nixpkgs",
+)
+
+nixpkgs_package(
+    name = "purescript",
+    repository = "@nixpkgs",
+)
+
+nixpkgs_package(
     name = "spago",
-    build_file_content = "exports_files([\"bin/spago\"])",
+    repository = "@nixpkgs",
+)
+
+nixpkgs_package(
+    name = "jq.bin",
     repository = "@nixpkgs",
 )
 
