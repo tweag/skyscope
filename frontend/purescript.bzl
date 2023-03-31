@@ -2,7 +2,13 @@ def _spago_packages_impl(repository_ctx):
     repository_ctx.file("spago.dhall", repository_ctx.read(repository_ctx.attr.config))
     repository_ctx.file("packages.dhall", repository_ctx.read(repository_ctx.attr.package_set))
 
-    install_result = repository_ctx.execute(["bash", "-c", "spago build 1>&2 && find .spago/ output/ -type f"])
+    install_result = repository_ctx.execute(["bash", "-c", """
+        export PATH="$(dirname "{purs}"):$PATH"
+        "{spago}" build 1>&2 && find .spago/ output/ -type f
+    """.format(
+        purs = repository_ctx.path(repository_ctx.attr._purs),
+        spago = repository_ctx.path(repository_ctx.attr._spago),
+    )])
 
     if install_result.return_code != 0:
         fail("spago install: {}".format(install_result.stderr))
@@ -15,7 +21,19 @@ def _spago_packages_impl(repository_ctx):
 spago_packages = repository_rule(
     implementation = _spago_packages_impl,
     attrs = {
-        "config": attr.label(allow_single_file = [".dhall"]),
-        "package_set": attr.label(allow_single_file = [".dhall"]),
+        "config": attr.label(
+            allow_single_file = [".dhall"],
+        ),
+        "package_set": attr.label(
+            allow_single_file = [".dhall"],
+        ),
+        "_purs": attr.label(
+            allow_single_file = True,
+            default = "@purescript//:bin/purs",
+        ),
+        "_spago": attr.label(
+            allow_single_file = True,
+            default = "@spago//:bin/spago",
+        ),
     },
 )

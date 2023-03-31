@@ -30,8 +30,8 @@ buildifier_test(
 sh_binary(
     name = "update-readme-toc",
     srcs = [":update-toc.sh"],
-    data = [":extract-toc.sed"],
     args = ["$(execpath :extract-toc.sed)"],
+    data = [":extract-toc.sed"],
 )
 
 write_file(
@@ -47,7 +47,7 @@ write_file(
         "    sed -n '/END-TOC/,$ p' README.md",
         ") >$SANDBOX/README.md",
         "mv -v $SANDBOX/README.md .",
-    ]
+    ],
 )
 
 write_file(
@@ -70,4 +70,3 @@ write_file(
         "}",
     ],
 )
-
