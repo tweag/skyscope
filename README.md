@@ -3,7 +3,7 @@
 
 A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/reference/skyframe) graphs.
 
-![skyscope-demo](https://github.com/tweag/skyscope/blob/c27f550ed71e50841d19656ca7dc6c89b9e7217d/img/skyscope-demo.gif)
+![demo](https://github.com/tweag/skyscope/blob/eef333cacd5a6fa042f689463a1499a52808cefb/img/demo.gif)
 
 ## Table of Contents
 
@@ -120,8 +120,6 @@ importing is taking too long, try doing `bazel shutdown` followed by a minimal
 sequence of commands to repopulate only the parts of the graph you are
 interested in.
 
-&lt;🏞 _Image showing terminal with a completed import_&gt;
-
 When the import process is complete you will be prompted to open a link in your
 browser. A list of previously imported graphs can be found at
 http://localhost:28581 and you can also delete imports from here when they are
@@ -134,7 +132,7 @@ you must use the search box to find and display nodes of interest. The pattern
 you enter here is matched against node keys, as they are printed by `bazel dump
 --skyframe`. You may use `%` as a wildcard.
 
-![skyscope-usage-1](https://github.com/tweag/skyscope/blob/c27f550ed71e50841d19656ca7dc6c89b9e7217d/img/skyscope-usage-1.jpg)
+![usage-1](https://github.com/tweag/skyscope/blob/eef333cacd5a6fa042f689463a1499a52808cefb/img/usage-1.png)
 
 As you type, the list of results will be dynamically updated and the matching
 part of each key highlighted. To keep the interface responsive only a few
@@ -152,7 +150,7 @@ to other visible nodes are displayed. This helps keep the complexity of the
 graph manageable. Visible nodes may be toggled between the _collapsed_ and
 _expanded_ states by clicking on them.
 
-&lt;🏞 _Image showing collapsed and expanded states_&gt;
+![usage-2](https://github.com/tweag/skyscope/blob/eef333cacd5a6fa042f689463a1499a52808cefb/img/usage-2.png)
 
 When a node has been expanded all its edges are displayed, including edges
 connected to hidden nodes. Hidden nodes are represented by small unlabelled
@@ -164,11 +162,13 @@ If one disconnected component of the graph depends on another, the dependency
 path will be represented by a dotted edge between the components. You can make
 the nodes on the dependency path visible by clicking _Open path_:
 
-&lt;🏞 _Image with mouse hovering over Open Path_&gt;
+![usage-3](https://github.com/tweag/skyscope/blob/eef333cacd5a6fa042f689463a1499a52808cefb/img/usage-3.png)
 
 This feature can be used to discover how a particular target depends on
 another, or how an action depends on a file. It works much like a `somepath`
 Bazel query.
+
+![usage-4](https://github.com/tweag/skyscope/blob/eef333cacd5a6fa042f689463a1499a52808cefb/img/usage-4.png)
 
 ### Hiding visible nodes
 
@@ -176,7 +176,7 @@ Collapsing nodes can help keep the size of the graph manageable but it will
 still grow too complex from time to time. When this happens you can crop the
 graph to a smaller selection of nodes:
 
-&lt;🏞 _Image showing crop selection in progress_&gt;
+![usage-5](https://github.com/tweag/skyscope/blob/eef333cacd5a6fa042f689463a1499a52808cefb/img/usage-5.png)
 
 To do this, press and hold the shift key while you make your selection. Upon
 releasing the shift key, the graph will be updated and only the selected nodes
