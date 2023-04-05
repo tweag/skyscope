@@ -173,15 +173,17 @@ data Click
   = NodeClick Element
   | PathClick Element
 
-type ClickHandler a = Click -> MouseEvent -> Effect a
+type ClickHandler = Click -> MouseEvent -> Effect Boolean
 
-makeTools :: Element -> NodeConfiguration -> Effect (ClickHandler Boolean)
+makeTools :: Element -> NodeConfiguration -> Effect ClickHandler
 makeTools graph nodeConfiguration = do
   clickHandlers <- sequence
     [ makeOpenAllPaths
     , makeOpenPath
     , makeCrop
+    , makeToggleVisibility
     ]
+
   pure \element event ->
     let tryTools handlers = case Array.uncons handlers of
           Just { head: handler, tail: handlers'} -> do
@@ -192,7 +194,48 @@ makeTools graph nodeConfiguration = do
      in tryTools clickHandlers
 
   where
-    makeOpenAllPaths :: Effect (ClickHandler Boolean)
+    makeToggleVisibility :: Effect ClickHandler
+    makeToggleVisibility = do
+      clicking <- Ref.new Nothing
+      pure \click event -> case click of
+        NodeClick node -> true <$ do
+          addClass node "Highlight"
+          hash <- Element.id node
+          Ref.read clicking >>= case _ of
+            Just (firstHash /\ timeoutId) -> do
+              Timer.clearTimeout timeoutId
+              Ref.write Nothing clicking
+              when (hash == firstHash) do
+                launchAff $ showNeighbours node
+            Nothing -> do
+              if MouseEvent.ctrlKey event
+                then nodeConfiguration.hide hash
+                else containsClass node "Collapsed" >>= if _
+                  then nodeConfiguration.show hash Expanded
+                  else containsClass node "Expanded" >>= if _
+                    then do
+                      timeoutId <- Timer.setTimeout 250 do
+                        nodeConfiguration.show hash Collapsed
+                        Ref.write Nothing clicking
+                      Ref.write (Just $ hash /\ timeoutId) clicking
+                    else nodeConfiguration.show hash Collapsed
+        _ -> pure false
+
+    showNeighbours :: Element -> Aff Unit
+    showNeighbours node = do
+      nodeHash <- liftEffect $ Element.id node
+      url <- liftEffect $ getImportId <#> (_ <> "/neighbours")
+      result <- Affjax.post Affjax.ResponseFormat.json url
+        $ Just $ Affjax.RequestBody.json $ Argonaut.fromString nodeHash
+      case result of
+        Right response -> case join $ Argonaut.toArray response.body <#> traverse Argonaut.toString of
+          Just neighbours -> nodeConfiguration.atomically $ liftEffect $ Just nodeHash <$ do
+            for_ neighbours $ flip nodeConfiguration.show Collapsed
+            nodeConfiguration.show nodeHash Expanded
+          Nothing -> error "unexpected neighbours results json"
+        Left err -> error $ Affjax.printError err
+
+    makeOpenAllPaths :: Effect ClickHandler
     makeOpenAllPaths = do
       active <- Ref.new false
       let openAllPaths = nodeConfiguration.atomically $ Nothing <$ do
@@ -208,7 +251,7 @@ makeTools graph nodeConfiguration = do
           PathClick _ -> launchAff openAllPaths $> true
           _ -> pure false
 
-    makeOpenPath :: Effect (ClickHandler Boolean)
+    makeOpenPath :: Effect ClickHandler
     makeOpenPath = pure \click _ -> case click of
       PathClick edge -> launchAff (openPath edge) $> true
       _ -> pure false
@@ -230,7 +273,7 @@ makeTools graph nodeConfiguration = do
             Left err -> error $ Affjax.printError err
       _ -> error "malformed edge id"
 
-    makeCrop :: Effect (ClickHandler Boolean)
+    makeCrop :: Effect ClickHandler
     makeCrop = do
       activeRef <- Ref.new false
       selectionRef <- Ref.new Object.empty
@@ -302,7 +345,7 @@ instance Show RenderState where
     RenderDone elapsedTime -> "RenderDone (" <> show elapsedTime <> ")"
     RenderFail statusCode -> "RenderFail (" <> show statusCode <> ")"
 
-attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler Boolean -> Effect (Channel RenderState)
+attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler -> Effect (Channel RenderState)
 attachGraphRenderer graph nodeConfiguration onClick = do
   render <- makeRenderer
   renderState <- Signal.channel RenderInit
@@ -335,18 +378,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
                     scrollIntoView element
                     void $ Timer.setTimeout animationDuration $
                       removeClass element "Highlight"
-          decorateGraph svg updateDocument \click event -> do
-            handled <- onClick click event
-            if handled then pure unit else case click of
-              NodeClick element -> do
-                addClass element "Highlight"
-                hash <- Element.id element
-                if MouseEvent.ctrlKey event
-                  then nodeConfiguration.hide hash
-                  else containsClass element "Collapsed" >>= if _
-                    then nodeConfiguration.show hash Expanded
-                    else nodeConfiguration.show hash Collapsed
-              _ -> pure unit
+          decorateGraph svg updateDocument onClick
 
   where
     makeRenderer :: Effect (Aff (Either StatusCode Element))
@@ -362,19 +394,21 @@ attachGraphRenderer graph nodeConfiguration onClick = do
             maybe (error "svg element not found") (pure <<< Right) svg
           status -> pure $ Left status
 
-    decorateGraph :: Element -> Effect Unit -> ClickHandler Unit -> Aff Unit
+    decorateGraph :: Element -> Effect Unit -> ClickHandler -> Aff Unit
     decorateGraph svg updateDocument handleClick = do
+      let addClickListener element eventType makeClick = do
+            listener <- EventTarget.eventListener \event ->
+              for_ (MouseEvent.fromEvent event) (handleClick $ makeClick element)
+            EventTarget.addEventListener eventType listener false $ Element.toEventTarget element
+
       liftEffect $ getElementsByClassName "edge" svg >>= traverse_ \edge -> do
-        containsClass edge "Path" >>= not >>> if _ then pure unit else do
-          listener <- EventTarget.eventListener \event ->
-            for_ (MouseEvent.fromEvent event) (handleClick $ PathClick edge)
-          EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget edge
+        containsClass edge "Path" >>= if _
+          then addClickListener edge EventTypes.click PathClick
+          else pure unit
         animateFadeIn edge
 
       contents <- liftEffect $ map Array.catMaybes $ getElementsByClassName "node" svg >>= traverse \node -> do
-        listener <- EventTarget.eventListener \event ->
-          for_ (MouseEvent.fromEvent event) (handleClick $ NodeClick node)
-        EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget node
+        addClickListener node EventTypes.click NodeClick
         animateNodeTranslation node
         toNodeElement node >>= case _ of
           Just { anchor, background, text } -> do
@@ -506,29 +540,6 @@ toNodeElement node = do
       pure $ Just { anchor, background, text: Nothing }
     _ -> pure Nothing
 
-
-
-
-
-
-{-
-data NodeElement_
-  = HiddenNode { nodeAnchor :: Element, background :: Element }
-  | VisibleNode { nodeType :: Element, nodeLabel :: Element, nodeAnchor :: Element, background :: Element }
-
-deconstructNodeElement_ :: Element -> Effect (Maybe NodeElement_)
-deconstructNodeElement_ node = do
-  paths <- getElementsByTagName "path" node
-  texts <- getElementsByTagName "text" node
-  ellipses <- getElementsByTagName "ellipse" node
-  anchors <- getElementsByTagName "a" node
-  case paths /\ texts /\ ellipses /\ anchors of
-    [ background ] /\ [ nodeType, nodeLabel ] /\ _ /\ [ nodeAnchor ] ->
-      pure $ Just $ VisibleNode { nodeType, nodeLabel, nodeAnchor, background }
-    _ /\ _ /\ [ background ] /\ [ nodeAnchor ] -> pure $ Just $ HiddenNode { nodeAnchor, background }
-    _ -> pure Nothing
-    -}
-
 data EdgeElement
   = PathElement { label :: Element }
 
@@ -543,16 +554,6 @@ type NodeFields =
   , nodeTooltip :: String
   , nodeContext :: String
   }
-
-{-
-derive instance genericNodeFields :: Generic NodeFields _
-
-instance decodeJsonNodeFields :: DecodeJson NodeFields where
-  decodeJson = genericDecodeJson
-           
-instance encodeJsonNodeFields :: EncodeJson NodeFields where
-  encodeJson = genericEncodeJson
-  -}
 
 createSearchBox :: NodeConfiguration -> Effect (Element /\ Effect Unit)
 createSearchBox nodeConfiguration = do
@@ -646,15 +647,15 @@ createSearchBox nodeConfiguration = do
                       in setTextContent (ellipsis <> String.drop startIndex content) span
 
   mouseOverSearchBox <- Ref.new false
-  resetSearchBoxFade <- Ref.new Nothing <#> \fadeTimerId -> do
-    traverse_ Timer.clearTimeout =<< Ref.read fadeTimerId
+  resetSearchBoxFade <- Ref.new Nothing <#> \fadeTimeoutId -> do
+    traverse_ Timer.clearTimeout =<< Ref.read fadeTimeoutId
     removeClass searchBox "Fade"
     nodeConfiguration.visible >>= case _ of
-      [] -> Ref.write Nothing fadeTimerId
+      [] -> Ref.write Nothing fadeTimeoutId
       _ -> do
-        delay <- Ref.read mouseOverSearchBox <#> if _ then 3000 else 100
-        timerId <- Timer.setTimeout delay $ addClass searchBox "Fade"
-        Ref.write (Just timerId) fadeTimerId
+        delay <- Ref.read mouseOverSearchBox <#> if _ then 10000 else 100
+        timeoutId <- Timer.setTimeout delay $ addClass searchBox "Fade"
+        Ref.write (Just timeoutId) fadeTimeoutId
 
   onElementEvent searchBox EventTypes.mouseenter $ const $ Ref.write true mouseOverSearchBox *> resetSearchBoxFade
   onElementEvent searchBox EventTypes.mouseleave $ const $ Ref.write false mouseOverSearchBox *> resetSearchBoxFade
@@ -796,7 +797,6 @@ createTray nodeConfiguration renderState = do
             Nothing -> "Request failed"
             Just (StatusCode code) -> "Rendering failed: " <> show code
       setTextContent content status
-
 
   pure tray
 

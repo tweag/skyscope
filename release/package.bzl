@@ -137,12 +137,13 @@ def package_release(binary, platforms, url_base):
         ],
     )
 
-    #copy_file("platform/import", "import.sh", "platform/import.sh")
-
-    copy_file(
-        "skyscope-linux",
-        "skyscope-$PLATFORM.zip",
-        "skyscope-linux.zip",
-    )
-
-# https://github.com/tweag/skyscope/releases/download/v0.0.0/skyscope-macos.zip
+    #copy_file(
+    #    "skyscope-linux",
+    #    "skyscope-$PLATFORM.zip",
+    #    "skyscope-linux.zip",
+    #)
+    #copy_file(
+    #    "skyscope-macos",
+    #    "skyscope-$PLATFORM.zip",
+    #    "skyscope-macos.zip",
+    #)

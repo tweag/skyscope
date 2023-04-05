@@ -33,7 +33,7 @@ import qualified Data.Text.Lazy as LazyText
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData (..))
 import Model
-import Query (HasFindPathMemo, findPath)
+import Query (HasFindPathMemo, findPath, selectEdges)
 import Sqlite (Database)
 import qualified Sqlite
 import System.Exit (ExitCode (..))
@@ -55,23 +55,13 @@ renderGraph ::
 renderGraph database nodeStates = do
   -- TODO: memoize rendered svgs
 
-  let selectEdges :: NodeHash -> Text -> IO [[SQLData]]
-      selectEdges nodeHash whereClause =
-        Sqlite.executeSql
-          database
-          [ "SELECT group_num, s.hash, t.hash FROM edge",
-            "INNER JOIN node AS s ON s.idx = edge.source",
-            "INNER JOIN node AS t ON t.idx = edge.target",
-            "WHERE " <> whereClause <> ";"
-          ]
-          [SQLText nodeHash]
   edges <- fmap (nub . concat) $
     flip Map.traverseWithKey nodeStates $
       \nodeHash state ->
         liftIO $
           mconcat
-            [ selectEdges nodeHash "s.hash = ?1",
-              selectEdges nodeHash "t.hash = ?1"
+            [ selectEdges database nodeHash "s.hash = ?1",
+              selectEdges database nodeHash "t.hash = ?1"
             ]
             <&> ( >>=
                     \[SQLInteger group, SQLText source, SQLText target] ->

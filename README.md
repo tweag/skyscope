@@ -153,7 +153,9 @@ _expanded_ states by clicking on them.
 
 When a node has been expanded all its edges are displayed, including edges
 connected to hidden nodes. Hidden nodes are represented by small unlabelled
-circles. You can click on these circles to make the hidden nodes visible.
+circles. You can click on these circles to make the hidden nodes visible. To
+make all the hidden neighbours of an expanded node visible at once, double
+click on it (this may take several seconds for a highly connected node).
 
 ### Automatic path finding
 
@@ -257,8 +259,8 @@ bazel query 'deps(//...)' --output build  # Additional context for targets
 
 If either of these commands fails (e.g. because some matching targets are
 broken) the import will still continue, but the additional context will be
-missing. In this situation you can use the `--aquery` and `--query` parameters
-to `skyscope import`[^1] to specify the queries Skyscope should run:
+missing. In this situation you can use the `--aquery` and `--query`
+parameters to specify the queries Skyscope should run:[^1]
 
 ```bash
 skyscope import --query='//src/...' --aquery='//src/main/...'
