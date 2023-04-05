@@ -3,7 +3,7 @@
 
 A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/reference/skyframe) graphs.
 
-![demo](https://github.com/tweag/skyscope/blob/c016dcdf6d7fd9e525b34ce429107221d68172df/img/demo.gif)
+![demo](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/demo.gif)
 
 ## Table of Contents
 
@@ -131,7 +131,7 @@ you must use the search box to find and display nodes of interest. The pattern
 you enter here is matched against node keys, as they are printed by `bazel dump
 --skyframe`. You may use `%` as a wildcard.
 
-![usage-1](https://github.com/tweag/skyscope/blob/c016dcdf6d7fd9e525b34ce429107221d68172df/img/usage-1.png)
+![usage-1](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-1.png)
 
 As you type, the list of results will be dynamically updated and the matching
 part of each key highlighted. To keep the interface responsive only a few
@@ -149,7 +149,7 @@ to other visible nodes are displayed. This helps keep the complexity of the
 graph manageable. Visible nodes may be toggled between the _collapsed_ and
 _expanded_ states by clicking on them.
 
-![usage-2](https://github.com/tweag/skyscope/blob/c016dcdf6d7fd9e525b34ce429107221d68172df/img/usage-2.png)
+![usage-2](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-2.png)
 
 When a node has been expanded all its edges are displayed, including edges
 connected to hidden nodes. Hidden nodes are represented by small unlabelled
@@ -157,17 +157,17 @@ circles. You can click on these circles to make the hidden nodes visible.
 
 ### Automatic path finding
 
-If one disconnected component of the graph depends on another, the dependency
-path will be represented by a dotted edge between the components. You can make
-the nodes on the dependency path visible by clicking _Open_:
+If one connected component of the graph depends on another, the dependency path
+will be represented by a dotted edge between the components. You can make the
+nodes on the dependency path visible by clicking _Open_:
 
-![usage-3](https://github.com/tweag/skyscope/blob/c016dcdf6d7fd9e525b34ce429107221d68172df/img/usage-3.png)
+![usage-3](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-3.png)
 
 This feature can be used to discover how a particular target depends on
 another, or how an action depends on a file. It works much like a `somepath`
 Bazel query.
 
-![usage-4](https://github.com/tweag/skyscope/blob/c016dcdf6d7fd9e525b34ce429107221d68172df/img/usage-4.png)
+![usage-4](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-4.png)
 
 ### Hiding visible nodes
 
@@ -175,7 +175,7 @@ Collapsing nodes can help keep the size of the graph manageable but it will
 still grow too complex from time to time. When this happens you can crop the
 graph to a smaller selection of nodes:
 
-![usage-5](https://github.com/tweag/skyscope/blob/c016dcdf6d7fd9e525b34ce429107221d68172df/img/usage-5.png)
+![usage-5](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-5.png)
 
 To do this, press and hold the shift key while you make your selection. Upon
 releasing the shift key, the graph will be updated and only the selected nodes
@@ -210,20 +210,161 @@ browser (not all image viewers fully support the CSS embedded in it).
 
 ## Advanced Usage
 
+When you run `skyscope import` the Skyscope server is automatically started (or
+restarted if it was already running). If you wish to start the server without
+importing a new graph, just run `skyscope server`[^1].
+
 ### Extra context for targets and actions
+
+The output produced by `bazel dump --skyframe` is sufficient to determine the
+Skyframe graph toplogy, but for many node types it does not provide the full
+context. For example, an `ACTION_EXECUTION` node only has a reference to the
+`CONFIGURED_TARGET` that created it, a `BUILD_CONFIGURATION`, and an
+`actionIndex`:
+
+```
+ACTION_EXECUTION:ActionLookupData{
+    actionLookupKey=ConfiguredTargetKey{label=//src/main/java/com/google/devtools/build/lib/bazel:BazelServer,
+    config=BuildConfigurationValue.Key[29162d16f36425edb5387766d6f9e873585a5b890f0ae3a9e778941f90411445]},
+    actionIndex=5
+}
+```
+
+The `actionIndex` field differentiates this `ACTION_EXECUTION` from others
+created by the same `CONFIGURED_TARGET`, but on its own is not very
+illuminating. We can use `bazel aquery` to get a list of actions and then
+correlate it with `actionIndex` to recover the missing context:
+
+```
+action 'Creating runfiles tree bazel-out/k8-fastbuild/bin/src/main/java/com/google/devtools/build/lib/bazel/BazelServer.runfiles'
+  Mnemonic: SymlinkTree
+  Target: //src/main/java/com/google/devtools/build/lib/bazel:BazelServer
+  Configuration: k8-fastbuild
+  Execution platform: //:default_host_platform
+  ActionKey: 7d501d61ad3623eb44a3f87523c2d681961adf84fb47759e558af0df2d5249d1
+  Inputs: [bazel-out/k8-fastbuild/bin/src/main/java/com/google/devtools/build/lib/bazel/BazelServer.runfiles_manifest]
+  Outputs: [bazel-out/k8-fastbuild/bin/src/main/java/com/google/devtools/build/lib/bazel/BazelServer.runfiles/MANIFEST]
+```
+
+A similar process with `bazel query` provides additional context for
+`CONFIGURED_TARGET` nodes. By default Skyscope will attempt to import this
+information by running the following when you do `skyscope import`:
+
+```bash
+bazel aquery 'deps(//...)'  # Get additional context for action executions
+bazel query 'deps(//...)' --output build  # Additional context for targets
+```
+
+If either of these commands fails (e.g. because some matching targets are
+broken) the import will still continue, but the additional context will be
+missing. In this situation you can use the `--aquery` and `--query` parameters
+to `skyscope import`[^1] to specify the queries Skyscope should run:
+
+```bash
+skyscope import --query='//src/...' --aquery='//src/main/...'
+```
+
+You can also pass `--no-query` and `--no-aquery` to disable importing of
+additional context entirely. This is useful when you want to import a Skyframe
+graph without affecting it at all (since the `bazel query` and `bazel aquery`
+commands can themselves cause nodes to be added to the graph).
+
 
 ### Changing CSS colours and styles
 
+The default theme is embedded in the Skyscope binary, but you can make it use a
+local file instead by setting the `SKYSCOPE_THEME_CSS` environment variable
+(probably in `~/.bashrc` or equivalent). Note that if a Skyscope server is
+already running, it will not pick up the new environment variable until it is
+restarted (`pkill -x skyscope`).
+
+It is recommended that you begin by making a local copy of the [default
+theme](https://github.com/tweag/skyscope/blob/master/frontend/src/theme.css)
+and edit that as needed. Any changes you make can be checked immediately by
+refreshing your browser. The relevant section for colours is this:
+
+```css
+div.ResultRow.ActionExecution           span.NodeTitle { color: hsl(318, 55%, 29%); }
+div.ResultRow.ConfiguredTarget          span.NodeTitle { color: hsl(117, 55%, 29%); }
+div.ResultRow.FileState                 span.NodeTitle { color: hsl(271, 55%, 29%); }
+
+g.node.ActionExecution                  text.NodeTitle {  fill: hsl(318, 55%, 29%); }
+g.node.ConfiguredTarget                 text.NodeTitle {  fill: hsl(117, 55%, 29%); }
+g.node.FileState                        text.NodeTitle {  fill: hsl(271, 55%, 29%); }
+```
+
+Set `color` for `div.ResultRow` selectors to change the colour of a particular
+node type in the search box results. The `g.node` selectors set the `fill`
+colour of the node title in the graph. While `div.ResultRow.Foo` can be set
+independently from `g.node.Foo`, for consistency they should be the same.
+
 ### Changing node label formatting
+
+The majority of the frontend is written in Purescript, but the formatting of
+node labels is done in Javascript to allow easy customisation. If you wish to
+change this formatting, you can make a local copy of the [default format
+file](https://github.com/tweag/skyscope/blob/master/frontend/src/format.js) and
+set the `SKYSCOPE_FORMAT_JS` environment variable appropriately. For reference,
+a minimal `format.js` would be:
+
+```javascript
+// You have access to a `node` object with the following fields:
+//   node.type        Camelcase version of SkyKey.functionName()
+//   node.data        Raw SkyKey as printed by bazel dump
+//   node.label       First label extracted from node data (possibly empty)
+//   node.context     Extra context, if there is any (e.g. from query or aquery)
+
+const title = ""  // Use default (which is node.type)
+
+const detail = ""  // Use default (which is node.label if non-empty, or node.data otherwise)
+
+const tooltip = ""  // Use default (which is node.data)
+
+return { title, detail, tooltip };
+```
+
+Returning an empty string for one of the fields will cause the default
+formatting to be used for that field. The four input fields can be parsed and
+combined as you wish to produce the output fields. You might want to add a
+temporary `console.log(node)` statement to see what the input fields look like
+in your browser console.
 
 ### Environment variable glossary
 
+
+| Variable Name        | Description                                                                           |
+|----------------------|---------------------------------------------------------------------------------------|
+| `SKYSCOPE_PORT`      | Port on which the Skyscope HTTP server should listen. Defaults to `28581` if not set. |
+| `SKYSCOPE_DATA`      | Directory where imports, server pid file, and other data should be stored. Defaults to `$HOME/.skyscope` if not set. |
+| `SKYSCOPE_FORMAT_JS` | Set this to the path of a [Javascript file](https://github.com/tweag/skyscope/blob/master/frontend/src/format.js) to override the embedded node formatting. |
+| `SKYSCOPE_THEME_CSS` | Set this to the path of a [CSS file](https://github.com/tweag/skyscope/blob/master/frontend/src/theme.css) to override the embedded theme. |
+
 ## Architectural Overview
+
+The backend is split into separate server and import processes. This allows a
+single server process to be used across multiple workspaces. The import process
+extracts the Skyframe data from Bazel and inserts it into an Sqlite database.
+After this is done it notifies the server of the newly imported graph. The
+server keeps track of all imported graphs in a central Sqlite database.
+
+![architecture](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/architecture.png)
+
+The frontend is responsible for storing the node configuration (i.e. which
+nodes are visible) and whenever this changes it sends a request to the backend
+to rerender the graph ([Graphviz](https://graphviz.org/) is used for this).
+The response is an unstyled SVG image which the frontend then decorates with
+CSS and various event handlers.
 
 ## Contributing
 
+You can contribute by reporting bugs or requesting features you would like to
+see in the [GitHub issue tracker](https://github.com/tweag/skyscope/issues).
+Pull requests are also welcome, but for non-trivial changes please discuss the
+change you have in mind first so we can agree on an approach. If there is an
+existing issue you can comment on that, otherwise you can open a new issue.
 
+[^1]: In this case, you should take subsequent references to `skyscope COMMAND
+ARGS` to mean `bazel run @skyscope//:COMMAND -- ARGS`.
 
-[^1]: In this case, you should take [subsequent](#todo) [references](#todo) to `skyscope COMMAND ARGS` to mean `bazel run @skyscope//:COMMAND -- ARGS`.
-
-[^2]: Usually _Alt + Left Arrow_ to go back and _Alt + Right Arrow_ to go forward.
+[^2]: Usually _Alt + Left Arrow_ to go back and _Alt + Right Arrow_ to go
+forward.
