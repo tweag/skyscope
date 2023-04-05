@@ -18,6 +18,7 @@ import Data.Functor ((<&>))
 import Data.HList (Label (..))
 import Data.HList.Record (HasField, hLookupByLabel)
 import Data.Int (Int64)
+import Data.List (nub, sort)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
@@ -31,9 +32,9 @@ import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf)
 import GHC.Generics (Generic)
 import Model
-import Sqlite (Database)
-import qualified Sqlite
 import Prelude
+import qualified Sqlite
+import Sqlite (Database)
 
 type Pattern = Text
 
@@ -169,6 +170,27 @@ filterNodes database limit = memoize "filterNodes" getFilterNodesMemo $ \pattern
       records <&> \[SQLText hash, SQLText nodeData, SQLText nodeType] ->
         (hash, Node nodeData nodeType)
 
+type GetNeighboursMemo = TVar (Map NodeHash [NodeHash])
+
+type HasGetNeighboursMemo r = HasField "getNeighbours" r GetNeighboursMemo
+
+getGetNeighboursMemo :: HasGetNeighboursMemo r => r -> GetNeighboursMemo
+getGetNeighboursMemo = hLookupByLabel (Label :: Label "getNeighbours")
+
+getNeighbours ::
+  HasGetNeighboursMemo r =>
+  Database ->
+  NodeHash ->
+  Memoize r [NodeHash]
+getNeighbours database = memoize "getNeighbours" getGetNeighboursMemo $ \nodeHash -> do
+  incomingEdges <- liftIO $ selectEdges database nodeHash "t.hash = ?"
+  outgoingEdges <- liftIO $ selectEdges database nodeHash "s.hash = ?"
+  pure $ filter (/= nodeHash) $ sort $ nub $ concat $ projectEdge <$> (incomingEdges <> outgoingEdges)
+  where
+    projectEdge :: [SQLData] -> [NodeHash]
+    projectEdge [ _, SQLText source, SQLText target ] = [ source, target ]
+    projectEdge _ = error "sql pattern match unexpectedly failed"
+
 type GetContextMemo = TVar (Map [Text] (Map Text Text))
 
 type HasGetContextMemo r = HasField "getContext" r GetContextMemo
@@ -189,3 +211,15 @@ getContext database = memoize "getContext" getContextMemo $
           <&> \case
             [[SQLText contextData]] -> Just (key, contextData)
             _ -> Nothing
+
+
+selectEdges :: Database -> NodeHash -> Text -> IO [[SQLData]]
+selectEdges database nodeHash whereClause =
+  Sqlite.executeSql
+    database
+    [ "SELECT group_num, s.hash, t.hash FROM edge",
+      "INNER JOIN node AS s ON s.idx = edge.source",
+      "INNER JOIN node AS t ON t.idx = edge.target",
+      "WHERE " <> whereClause <> ";"
+    ]
+    [SQLText nodeHash]

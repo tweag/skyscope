@@ -124,10 +124,6 @@ div.ResultRow.Selected {
     background-color: hsl(199, 21%, 82%);
 }
 
-div.ResultRow:hover, div.ResultRow.Selected:hover {
-    background-color: hsl(199, 21%, 77%);
-}
-
 div.ResultRow > span.NodeTitle {
     font-weight: bold;
     margin-right: 10px;
@@ -142,6 +138,10 @@ div.ResultRow > span.Context {
 div.ResultRow > span.Highlight {
     color: hsl(0, 0%, 0%);
     text-decoration: underline;
+}
+
+div.ResultRow:hover > span.Context {
+    color: hsl(0, 0%, 25%);
 }
 
 div.ResultRow                           span.NodeTitle { color: hsl(  0,  0%, 25%); }

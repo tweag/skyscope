@@ -87,12 +87,14 @@ server port = withImportDb $ \importDatabase -> do
         findPathMemo <- newTVar Map.empty
         floodNodesMemo <- newTVar Map.empty
         filterNodesMemo <- newTVar Map.empty
+        getNeighboursMemo <- newTVar Map.empty
         getContextMemo <- newTVar Map.empty
         unifyComponentsMemo <- newTVar Map.empty
         pure $
           ((Label :: Label "findPath") .=. findPathMemo)
             .*. ((Label :: Label "floodNodes") .=. floodNodesMemo)
             .*. ((Label :: Label "filterNodes") .=. filterNodesMemo)
+            .*. ((Label :: Label "getNeighbours") .=. getNeighboursMemo)
             .*. ((Label :: Label "getContext") .=. getContextMemo)
             .*. ((Label :: Label "unifyComponents") .=. unifyComponentsMemo)
             .*. emptyRecord
@@ -179,6 +181,13 @@ server port = withImportDb $ \importDatabase -> do
       Json.eitherDecode <$> Web.body >>= \case
         Right pattern ->
           let route Import {..} database = withMemo importId $ Query.filterNodes database 256 pattern
+           in Web.json =<< importRoute importDatabase route
+        Left err -> badRequest err
+
+    Web.post "/:importId/neighbours" $
+      Json.eitherDecode <$> Web.body >>= \case
+        Right nodeHash ->
+          let route Import {..} database = withMemo importId $ Query.getNeighbours database nodeHash
            in Web.json =<< importRoute importDatabase route
         Left err -> badRequest err
 
