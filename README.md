@@ -3,7 +3,7 @@
 
 A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/reference/skyframe) graphs.
 
-![demo](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/demo.gif)
+![demo](https://github.com/tweag/skyscope/blob/15f198cd751aada98e17257469b8f6a05e96fb64/img/demo.gif)
 
 ## Table of Contents
 
@@ -131,7 +131,7 @@ you must use the search box to find and display nodes of interest. The pattern
 you enter here is matched against node keys, as they are printed by `bazel dump
 --skyframe`. You may use `%` as a wildcard.
 
-![usage-1](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-1.png)
+![usage-1](https://github.com/tweag/skyscope/blob/15f198cd751aada98e17257469b8f6a05e96fb64/img/usage-1.png)
 
 As you type, the list of results will be dynamically updated and the matching
 part of each key highlighted. To keep the interface responsive only a few
@@ -149,7 +149,7 @@ to other visible nodes are displayed. This helps keep the complexity of the
 graph manageable. Visible nodes may be toggled between the _collapsed_ and
 _expanded_ states by clicking on them.
 
-![usage-2](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-2.png)
+![usage-2](https://github.com/tweag/skyscope/blob/15f198cd751aada98e17257469b8f6a05e96fb64/img/usage-2.png)
 
 When a node has been expanded all its edges are displayed, including edges
 connected to hidden nodes. Hidden nodes are represented by small unlabelled
@@ -161,13 +161,13 @@ If one connected component of the graph depends on another, the dependency path
 will be represented by a dotted edge between the components. You can make the
 nodes on the dependency path visible by clicking _Open_:
 
-![usage-3](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-3.png)
+![usage-3](https://github.com/tweag/skyscope/blob/15f198cd751aada98e17257469b8f6a05e96fb64/img/usage-3.png)
 
 This feature can be used to discover how a particular target depends on
 another, or how an action depends on a file. It works much like a `somepath`
 Bazel query.
 
-![usage-4](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-4.png)
+![usage-4](https://github.com/tweag/skyscope/blob/15f198cd751aada98e17257469b8f6a05e96fb64/img/usage-4.png)
 
 ### Hiding visible nodes
 
@@ -175,7 +175,7 @@ Collapsing nodes can help keep the size of the graph manageable but it will
 still grow too complex from time to time. When this happens you can crop the
 graph to a smaller selection of nodes:
 
-![usage-5](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/usage-5.png)
+![usage-5](https://github.com/tweag/skyscope/blob/15f198cd751aada98e17257469b8f6a05e96fb64/img/usage-5.png)
 
 To do this, press and hold the shift key while you make your selection. Upon
 releasing the shift key, the graph will be updated and only the selected nodes
@@ -347,7 +347,7 @@ extracts the Skyframe data from Bazel and inserts it into an Sqlite database.
 After this is done it notifies the server of the newly imported graph. The
 server keeps track of all imported graphs in a central Sqlite database.
 
-![architecture](https://github.com/tweag/skyscope/blob/d9afa7a523dc2fb578dccf033bd1d59c4a960629/img/architecture.png)
+![architecture](https://github.com/tweag/skyscope/blob/15f198cd751aada98e17257469b8f6a05e96fb64/img/architecture.png)
 
 The frontend is responsible for storing the node configuration (i.e. which
 nodes are visible) and whenever this changes it sends a request to the backend
