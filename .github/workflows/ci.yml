@@ -10,11 +10,12 @@ env:
   cache-version: 0
 
 jobs:
-  ormolu:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    - uses: mrkkrp/ormolu-action@v3
+# Temporarily disabled: Error: Unable to resolve action. Repository not found: mrkkrp/ormolu-action
+#  ormolu:
+#    runs-on: ubuntu-latest
+#    steps:
+#    - uses: actions/checkout@v3
+#    - uses: mrkkrp/ormolu-action@v3
   buildifier:
     runs-on: ubuntu-latest
     steps:
