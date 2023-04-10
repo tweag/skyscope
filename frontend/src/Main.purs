@@ -182,6 +182,7 @@ makeTools graph nodeConfiguration = do
     , makeOpenPath
     , makeCrop
     , makeToggleVisibility
+
     ]
 
   pure \element event ->
