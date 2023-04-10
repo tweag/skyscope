@@ -32,9 +32,9 @@ import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf)
 import GHC.Generics (Generic)
 import Model
-import Prelude
-import qualified Sqlite
 import Sqlite (Database)
+import qualified Sqlite
+import Prelude
 
 type Pattern = Text
 
@@ -188,7 +188,7 @@ getNeighbours database = memoize "getNeighbours" getGetNeighboursMemo $ \nodeHas
   pure $ filter (/= nodeHash) $ sort $ nub $ concat $ projectEdge <$> (incomingEdges <> outgoingEdges)
   where
     projectEdge :: [SQLData] -> [NodeHash]
-    projectEdge [ _, SQLText source, SQLText target ] = [ source, target ]
+    projectEdge [_, SQLText source, SQLText target] = [source, target]
     projectEdge _ = error "sql pattern match unexpectedly failed"
 
 type GetContextMemo = TVar (Map [Text] (Map Text Text))
@@ -211,7 +211,6 @@ getContext database = memoize "getContext" getContextMemo $
           <&> \case
             [[SQLText contextData]] -> Just (key, contextData)
             _ -> Nothing
-
 
 selectEdges :: Database -> NodeHash -> Text -> IO [[SQLData]]
 selectEdges database nodeHash whereClause =
