@@ -46,6 +46,7 @@ This method is recommended if you want to quickly try Skyscope with minimal
 hassle. Simply add the following to your `WORKSPACE` file:
 
 ```python
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = "skyscope",
     sha256 = "0000000000000000000000000000000000000000000000000000000000000000",

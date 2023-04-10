@@ -72,25 +72,25 @@ def package_release(binary, platforms, url_base):
             },
         }),
     )
-    copy_file("platform/import", "import.sh", "platform/import.sh")
-    copy_file("platform/server", "server.sh", "platform/server.sh")
-    copy_file("platform/loader", "loader.bzl", "platform/loader.bzl")
-    copy_file("platform/wrapper", "//bin:skyscope", "platform/bin/skyscope")
-    copy_file("platform/BUILD", "platform.BUILD.bazel", "platform/BUILD.bazel")
-    write_file("platform/WORKSPACE", "platform/WORKSPACE.bazel", content = ["workspace(name = \"skyscope\")\n"])
+    copy_file("platform_import", "import.sh", "platform/import.sh")
+    copy_file("platform_server", "server.sh", "platform/server.sh")
+    copy_file("platform_loader", "loader.bzl", "platform/loader.bzl")
+    copy_file("platform_wrapper", "//bin:skyscope", "platform/bin/skyscope")
+    copy_file("platform_BUILD", "platform.BUILD.bazel", "platform/BUILD")
+    write_file("platform_WORKSPACE", "platform/WORKSPACE", content = ["workspace(name = \"skyscope\")\n"])
     pkg_zip(
         name = "platform-archive",
         out = "skyscope-$PLATFORM.zip",
         strip_prefix = "/release/platform",
         package_dir = "/skyscope",
         srcs = [
+            ":platform/BUILD",
+            ":platform/WORKSPACE",
             ":platform/closure",
             ":platform/import.sh",
             ":platform/server.sh",
             ":platform/loader.bzl",
             ":platform/bin/skyscope",
-            ":platform/BUILD.bazel",
-            ":platform/WORKSPACE.bazel",
         ],
     )
 
@@ -124,16 +124,16 @@ def package_release(binary, platforms, url_base):
         )),
         "}))",
     ])
-    write_file("alias/BUILD", "alias/BUILD.bazel", content = [make_alias("import"), make_alias("server")])
-    write_file("alias/WORKSPACE", "alias/WORKSPACE.bazel", content = ["workspace(name = \"skyscope\")\n"])
+    write_file("alias_BUILD", "alias/BUILD", content = [make_alias("import"), make_alias("server")])
+    write_file("alias_WORKSPACE", "alias/WORKSPACE", content = ["workspace(name = \"skyscope\")\n"])
     pkg_zip(
         name = "alias-archive",
         out = "skyscope.zip",
         strip_prefix = "/release/alias",
         srcs = [
+            ":alias/BUILD",
+            ":alias/WORKSPACE",
             ":alias/repository.bzl",
-            ":alias/BUILD.bazel",
-            ":alias/WORKSPACE.bazel",
         ],
     )
 

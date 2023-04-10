@@ -3,7 +3,7 @@ load(":package.bzl", "package_release")
 package_release(
     "//backend:skyscope",
     {
-        "@platforms//os:linux": "ed7f04bfdfcc46171c6f5db6c64395cde1805d429c8c60593787dec2a61c0a94",
+        "@platforms//os:linux": "1e26876b6db7c833cea40aedd8c274048f6fb922869468ea4d2669caf56ec1dc",
         "@platforms//os:macos": "0000000000000000000000000000000000000000000000000000000000000000",
     },
     #"https://github.com/tweag/skyscope/releases/download/v0.0.0",
