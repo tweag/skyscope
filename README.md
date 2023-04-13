@@ -35,8 +35,7 @@ A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/refere
 
 There are a few different ways to install and run Skyscope. Pick whichever suits best.
 
-_While the repository is private to Tweag, only the [Build and run it
-from source](#build-and-run-it-from-source-requires-nix) method is supported._
+_While the repository is private to Tweag, the `WORKSPACE` method is not supported._
 
 <strike>
 
@@ -49,8 +48,8 @@ hassle. Simply add the following to your `WORKSPACE` file:
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = "skyscope",
-    sha256 = "0000000000000000000000000000000000000000000000000000000000000000",
-    urls = ["https://github.com/tweag/skyscope/releases/download/v0.0.0/skyscope.zip"]
+    sha256 = "f13aaee8154061716a45b4fd43bed301d99e2f8ff22cb0e66e84f2fb82c5bbf9",
+    urls = ["https://github.com/tweag/skyscope/releases/download/v0.1.0/skyscope.zip"]
 )
 load("@skyscope//:repository.bzl", "configure_skyscope")
 configure_skyscope()
@@ -58,6 +57,8 @@ configure_skyscope()
 
 You will then be able to invoke Skyscope in that workspace with `bazel run`
 (see [Using Skyscope](#using-skyscope) for details).
+
+</strike>
 
 ### Manually download and install a release
 
@@ -67,7 +68,7 @@ its `WORKSPACE` file.
 
 1. Go to the [releases page](https://github.com/tweag/skyscope/releases) and
 pick the version you want. The latest is
-[v0.0.0](https://github.com/tweag/skyscope/releases/v0.0.0).
+[v0.1.0](https://github.com/tweag/skyscope/releases/v0.1.0).
 
 2. Download a zip archive for your Operating System (currently supported are
 Linux and MacOS).
@@ -81,8 +82,6 @@ unzip ~/Downloads/skyscope-linux.zip -d ~/.local/
 ```bash
 export PATH="$HOME/.local/skyscope/bin:$PATH"
 ```
-
-</strike>
 
 ### Build and run it from source (requires [Nix](https://nixos.org/download.html))
 
