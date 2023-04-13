@@ -416,7 +416,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
             Element.getAttribute "xlink:title" anchor >>= case _ of
               Just nodeData -> do
                 let label = join $ Regex.match labelRegex nodeData <#> Array.NonEmpty.head
-                    labelRegex = Regex.unsafeRegex "(@\\w+)?//(/?[^/:,}\\]]+)*(:[^/,}\\]]+(/[^/,}\\]]+)*)?" Regex.noFlags
+                    labelRegex = Regex.unsafeRegex "(@[-\\w]+)?//(/?[^/:,}\\]]+)*(:[^/,}\\]]+(/[^/,}\\]]+)*)?" Regex.noFlags
                 addClass background "Selectable"
                 case text of
                   Just { title, detail } -> do
