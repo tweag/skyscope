@@ -367,7 +367,7 @@ change you have in mind first so we can agree on an approach. If there is an
 existing issue you can comment on that, otherwise you can open a new issue.
 
 [^1]: In this case, you should take subsequent references to `skyscope COMMAND
-ARGS` to mean `bazel run @skyscope//:COMMAND -- ARGS`.
+ARGS` to mean `bazel run -- @skyscope//:COMMAND ARGS`.
 
 [^2]: Usually _Alt + Left Arrow_ to go back and _Alt + Right Arrow_ to go
 forward.
