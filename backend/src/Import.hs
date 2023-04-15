@@ -13,9 +13,9 @@ import Control.Category ((>>>))
 import Control.Concurrent (forkIO, getNumCapabilities, threadDelay)
 import Control.Concurrent.STM (atomically, retry)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVar, readTVarIO, stateTVar, writeTVar)
+import Control.Monad (guard)
 import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
-import Control.Monad.State (evalState)
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.Attoparsec.Combinator as Parser
 import Data.Attoparsec.Text (Parser)
@@ -43,6 +43,7 @@ import qualified Data.Text.IO as Text
 import qualified Data.Time.Clock as Clock
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData (..))
+import Foreign.C.String (CString, withCString)
 import Foreign.C.Types (CInt (..), CLong (..))
 import qualified Foreign.Marshal.Array as Marshal
 import Foreign.Ptr (Ptr, castPtr)
@@ -59,9 +60,9 @@ withDatabase label path action = timed label $
     createSchema database
     Sqlite.executeStatements
       database
-      [ ["pragma mmap_size = 10737418240;"],
-        ["pragma journal_mode = WAL;"],
-        ["pragma synchronous = off;"]
+      [ ["pragma synchronous = off;"],
+        ["pragma journal_mode = MEMORY;"],
+        ["pragma mmap_size = 1073741824;"]
       ]
     action database
   where
@@ -77,34 +78,17 @@ addContext database context = do
 
 importSkyframe :: FilePath -> IO ()
 importSkyframe path = withDatabase "importing skyframe" path $ \database -> do
-  legacy <- getSkyscopeEnv "LEGACY_BAZEL"
-  let parser =
-        if isJust legacy
-          then skyframeParserLegacy
-          else skyframeParser
-  (nodes, edges) <-
-    Text.getContents <&> Parser.parseOnly parser >>= \case
-      Left err -> error $ "failed to parse skyframe graph: " <> err
-      Right graph -> pure graph
-  putStrLn $ "node count = " <> show (length nodes) <> ", edge count = " <> show (length edges)
-  let assignIndex node = gets (,node) <* modify (+ 1)
-      indexedNodes = evalState (for nodes assignIndex) 1
-      coerceMaybe = fromMaybe $ error "parser produced an edge with an unknown node"
-      indexedEdges = coerceMaybe $
-        for (Set.toList edges) $ \(Edge group source target) -> do
-          (sourceIndex, _) <- Map.lookup source indexedNodes
-          (targetIndex, _) <- Map.lookup target indexedNodes
-          pure (group, sourceIndex, targetIndex)
-  Sqlite.batchInsert database "node" ["idx", "hash", "data", "type"] $
-    Map.assocs indexedNodes <&> \(nodeHash, (nodeIdx, Node nodeData nodeType)) ->
-      SQLInteger nodeIdx : (SQLText <$> [nodeHash, nodeType <> ":" <> nodeData, nodeType])
-  Sqlite.batchInsert database "edge" ["group_num", "source", "target"] $
-    indexedEdges <&> \(g, s, t) -> SQLInteger <$> [fromIntegral g, s, t]
+  guard =<< withCString path c_importSkyframe
   indexing <- indexPathsAsync database
   atomically $
     readTVar indexing >>= \case
       False -> pure ()
       True -> retry
+  _ <- Text.length <$> Text.getContents
+  pure ()
+
+foreign import ccall safe "import.cpp"
+  c_importSkyframe :: CString -> IO Bool
 
 indexPathsAsync :: Database -> IO (TVar Bool)
 indexPathsAsync database = do
@@ -307,7 +291,7 @@ checkSkyframeParserEquivalence = do
     then pure ()
     else error $ "parsers not equivalent"
 
--- $> Import.checkSkyframeParserEquivalence
+-- $> putStrLn $ Data.Text.unpack Import.skyframeExample
 
 indexPaths :: Database -> TVar (Int, Int) -> IO ()
 indexPaths database progress = do
