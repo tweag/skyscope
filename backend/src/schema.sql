@@ -3,15 +3,15 @@ CREATE TABLE IF NOT EXISTS node (
   hash TEXT,
   data TEXT,
   type TEXT,
-  PRIMARY KEY (idx),
-  UNIQUE (hash)
+  PRIMARY KEY (idx) ON CONFLICT IGNORE,
+  UNIQUE (hash) ON CONFLICT IGNORE
 );
 
 CREATE TABLE IF NOT EXISTS edge (
   source INTEGER,
   target INTEGER,
   group_num INTEGER,
-  PRIMARY KEY (source, target),
+  PRIMARY KEY (source, target) ON CONFLICT IGNORE,
   FOREIGN KEY (source) REFERENCES node(idx),
   FOREIGN KEY (target) REFERENCES node(idx)
 );
