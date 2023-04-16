@@ -1,18 +1,14 @@
 load("@com_github_bazelbuild_buildtools//buildifier:def.bzl", "buildifier", "buildifier_test")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
-load("//release:loader.bzl", "entrypoint", "ld_binary")
 
-entrypoint(
-    name = "import",
-    src = "//release:import.sh",
-    binary = "//backend:skyscope",
-    includes = ["//release:server.sh"],
-)
-
-entrypoint(
-    name = "server",
-    src = "//release:server.sh",
-    binary = "//backend:skyscope",
+sh_binary(
+    name = "skyscope",
+    srcs = ["//release:entrypoint.sh"],
+    data = ["//backend:skyscope"],
+    env = {
+        "SKYSCOPE_BINARY": "$(rootpath //backend:skyscope)",
+    },
+    visibility = ["//visibility:public"],
 )
 
 buildifier(

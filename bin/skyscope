@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-set -eu
+set -eux
 
-export SKYSCOPE_WORKSPACE="$PWD"
+export SKYSCOPE_WORKSPACE="$(bazel info workspace)"
 cd "${BASH_SOURCE[0]%/bin/skyscope}"
 
-TARGET_NAME="${1?usage: skyscope [import|server]}"
-shift
-
-bazel run "//:$TARGET_NAME" -- "$@"
+bazel run -- //:skyscope "$@"

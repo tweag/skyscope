@@ -1,22 +1,19 @@
-load(":loader.bzl", "entrypoint", "ld_binary")
-
-entrypoint(
+sh_binary(
     name = "import",
-    src = "import.sh",
-    binary = ":skyscope",
-    includes = ["server.sh"],
+    srcs = ["import.sh"],
+    data = glob([
+        "bin/skyscope",
+        "closure/**",
+    ]),
     visibility = ["//visibility:public"],
 )
 
-entrypoint(
+sh_binary(
     name = "server",
-    src = "server.sh",
-    binary = ":skyscope",
+    srcs = ["server.sh"],
+    data = glob([
+        "bin/skyscope",
+        "closure/**",
+    ]),
     visibility = ["//visibility:public"],
-)
-
-ld_binary(
-    name = "skyscope",
-    binary = "closure/skyscope",
-    libraries = glob(["closure/*.so.*"]),
 )
