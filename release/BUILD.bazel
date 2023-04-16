@@ -3,13 +3,11 @@ load(":package.bzl", "package_release")
 package_release(
     "//backend:skyscope",
     {
-        "@platforms//os:linux": "9f36e2da918c971fd0546944736f8718e03d3ad3ebd1b9b07afae0ab383b219e",
+        "@platforms//os:linux": "94279f7b141eb2b79b70573375e08497ab0b4e422262593fa1bc2f411a620c52",
         "@platforms//os:macos": "bc8f0157c65d0d7f12a3cc77eefe44986d0f9cfdbbe1a2d1aad1c16b89e24200",
     },
-    "https://github.com/tweag/skyscope/releases/download/v0.1.0",
+    "file:///skyscope/bazel-bin/release",
+    #"https://github.com/tweag/skyscope/releases/download/v0.1.0",
 )
 
-exports_files([
-    "import.sh",
-    "server.sh",
-])
+exports_files(["entrypoint.sh"])

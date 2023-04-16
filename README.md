@@ -33,9 +33,22 @@ A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/refere
 
 ## Getting Skyscope
 
-There are a few different ways to install and run Skyscope. Pick whichever suits best.
+As a prerequisite you will need the `graphviz`, `curl` and `jq` packages
+installed and `PATH` set so they can be found. Use your preferred package
+manager to do this, e.g.  for Ubuntu:
 
-_While the repository is private to Tweag, the `WORKSPACE` method is not supported._
+```bash
+apt install graphviz
+```
+Or for MacOS:
+```bash
+brew install graphviz
+```
+
+There are a few different ways to install and run Skyscope itself. Pick
+whichever suits best.
+
+<!-- _While the repository is private to Tweag, the `WORKSPACE` method is not supported._ -->
 
 <strike>
 
@@ -336,8 +349,9 @@ in your browser console.
 
 | Variable Name        | Description                                                                           |
 |----------------------|---------------------------------------------------------------------------------------|
-| `SKYSCOPE_PORT`      | Port on which the Skyscope HTTP server should listen. Defaults to `28581` if not set. |
+| `SKYSCOPE_PORT`      | Port on which the Skyscope HTTP server should listen. Defaults to `28581`.            |
 | `SKYSCOPE_DATA`      | Directory where imports, server pid file, and other data should be stored. Defaults to `$HOME/.skyscope` if not set. |
+| `SKYSCOPE_DEBUG`     | Execution tracing is enabled for the wrapper scripts when this variable is set. |
 | `SKYSCOPE_FORMAT_JS` | Set this to the path of a [Javascript file](https://github.com/tweag/skyscope/blob/master/frontend/src/format.js) to override the embedded node formatting. |
 | `SKYSCOPE_THEME_CSS` | Set this to the path of a [CSS file](https://github.com/tweag/skyscope/blob/master/frontend/src/theme.css) to override the embedded theme. |
 

@@ -72,12 +72,19 @@ def package_release(binary, platforms, url_base):
             },
         }),
     )
-    copy_file("platform_import", "import.sh", "platform/import.sh")
-    copy_file("platform_server", "server.sh", "platform/server.sh")
-    copy_file("platform_loader", "loader.bzl", "platform/loader.bzl")
-    copy_file("platform_wrapper", "//bin:skyscope", "platform/bin/skyscope")
+    wrapper = lambda name: [
+        "[[ \"${SKYSCOPE_DEBUG:-}\" ]] && set -x",
+        "RELEASE_DIR=$(find . -type d -name skyscope -printf \"$PWD/%P\n\" -quit)",
+        "export SKYSCOPE_BINARY=\"$RELEASE_DIR/closure/skyscope\"",
+        "\"$RELEASE_DIR/bin/skyscope\" {} \"$@\"".format(name),
+    ]
+    write_file("platform_import", "platform/import.sh", content = wrapper("import"))
+    write_file("platform_server", "platform/server.sh", content = wrapper("server"))
+    copy_file("platform_entrypoint", "entrypoint.sh", "platform/bin/skyscope")
     copy_file("platform_BUILD", "platform.BUILD.bazel", "platform/BUILD")
-    write_file("platform_WORKSPACE", "platform/WORKSPACE", content = ["workspace(name = \"skyscope\")\n"])
+    write_file("platform_WORKSPACE", "platform/WORKSPACE", content = [
+        "workspace(name = \"skyscope\")\n"
+    ])
     pkg_zip(
         name = "platform-archive",
         out = "skyscope-$PLATFORM.zip",
@@ -89,7 +96,6 @@ def package_release(binary, platforms, url_base):
             ":platform/closure",
             ":platform/import.sh",
             ":platform/server.sh",
-            ":platform/loader.bzl",
             ":platform/bin/skyscope",
         ],
     )
