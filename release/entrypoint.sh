@@ -73,16 +73,20 @@ esac
 
 bazel dump --skyframe=$DUMP_OPT | skyscope import-skyframe "$DB_PATH"
 
-if ! bazel aquery "$SKYSCOPE_AQUERY" | skyscope import-actions "$DB_PATH"; then
-    echo -e "\e[33mSkipping import of additional action data. Will be unable to show specific ActionExecution types." >&2
-    echo -e "You can try passing a different pattern to the \e[1;33m--aquery=\e[0;33m parameter to work around this.\e[0m" >&2
-    exit 1
+if [[ "${SKYSCOPE_AQUERY:-}" ]]; then
+    if ! bazel aquery "$SKYSCOPE_AQUERY" | skyscope import-actions "$DB_PATH"; then
+        echo -e "\e[33mSkipping import of additional action data. Will be unable to show specific ActionExecution types." >&2
+        echo -e "You can try passing a different pattern to the \e[1;33m--aquery=\e[0;33m parameter to work around this.\e[0m" >&2
+        exit 1
+    fi
 fi
 
-if ! bazel query "$SKYSCOPE_QUERY" --output build | skyscope import-targets "$DB_PATH"; then
-    echo -e "\e[33mSkipping import of additional target data. Will be unable to show specific ConfiguredTarget types." >&2
-    echo -e "You can try passing a different pattern to the \e[1;33m--query=\e[0;33m parameter to work around this.\e[0m" >&2
-    exit 1
+if [[ "${SKYSCOPE_QUERY:-}" ]]; then
+    if ! bazel query "$SKYSCOPE_QUERY" --output build | skyscope import-targets "$DB_PATH"; then
+        echo -e "\e[33mSkipping import of additional target data. Will be unable to show specific ConfiguredTarget types." >&2
+        echo -e "You can try passing a different pattern to the \e[1;33m--query=\e[0;33m parameter to work around this.\e[0m" >&2
+        exit 1
+    fi
 fi
 
 # Notify server about new import.
