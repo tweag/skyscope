@@ -20,6 +20,20 @@ skyscope() {(
     LD_LIBRARY_PATH="$CLOSURE" "${SKYSCOPE_BINARY:-$CLOSURE/skyscope}" +RTS -N -RTS "$@"
 )}
 
+# Check the required tools are available.
+missing() {
+    echo
+    echo "Unable to find required tool: $1"
+    echo
+    echo "You should install '${2:-$1}' using your preferred package manager and ensure"
+    echo "its binaries are reachable from your PATH variable. For more information see:"
+    echo "  https://github.com/tweag/skyscope#getting-skyscope"
+    exit 1
+}
+dot -V || missing dot graphviz
+curl -V || missing curl
+jq -V || missing jq
+
 case "${1:-}" in
     import|server)
         # Restart the server.
