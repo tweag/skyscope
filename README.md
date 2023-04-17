@@ -48,10 +48,6 @@ brew install graphviz
 There are a few different ways to install and run Skyscope itself. Pick
 whichever suits best.
 
-<!-- _While the repository is private to Tweag, the `WORKSPACE` method is not supported._ -->
-
-<strike>
-
 ### Add it to your `WORKSPACE` file
 
 This method is recommended if you want to quickly try Skyscope with minimal
@@ -70,8 +66,6 @@ configure_skyscope()
 
 You will then be able to invoke Skyscope in that workspace with `bazel run`
 (see [Using Skyscope](#using-skyscope) for details).
-
-</strike>
 
 ### Manually download and install a release
 

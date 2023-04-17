@@ -83,7 +83,7 @@ def package_release(binary, platforms, url_base):
     copy_file("platform_entrypoint", "entrypoint.sh", "platform/bin/skyscope")
     copy_file("platform_BUILD", "platform.BUILD.bazel", "platform/BUILD")
     write_file("platform_WORKSPACE", "platform/WORKSPACE", content = [
-        "workspace(name = \"skyscope\")\n"
+        "workspace(name = \"skyscope\")\n",
     ])
     pkg_zip(
         name = "platform-archive",
