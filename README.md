@@ -304,8 +304,8 @@ g.node.FileState                        text.NodeTitle {  fill: hsl(271, 55%, 29
 
 Set `color` for `div.ResultRow` selectors to change the colour of a particular
 node type in the search box results. The `g.node` selectors set the `fill`
-colour of the node title in the graph. While `div.ResultRow.Foo` can be set
-independently from `g.node.Foo`, for consistency they should be the same.
+colour of the node title in the graph. While `div.ResultRow` can be set
+independently from `g.node`, for consistency they should be the same.
 
 ### Changing node label formatting
 
