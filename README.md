@@ -180,7 +180,7 @@ Bazel query.
 
 ### Hiding visible nodes
 
-Collapsing nodes can help keep the size of the graph manageable but it will
+Collapsing nodes can help keep the size of the graph manageable, but it will
 still grow too complex from time to time. When this happens you can crop the
 graph to a smaller selection of nodes:
 
