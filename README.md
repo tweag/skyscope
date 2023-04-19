@@ -264,7 +264,7 @@ bazel aquery 'deps(//...)'  # Get additional context for action executions
 bazel query 'deps(//...)' --output build  # Additional context for targets
 ```
 
-If either of these commands fails (e.g. because some matching targets are
+If either of these commands fail (e.g. because some matching targets are
 broken) the import will still continue, but the additional context will be
 missing. In this situation you can use the `--aquery` and `--query`
 parameters to specify the queries Skyscope should run:[^1]
