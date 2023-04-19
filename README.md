@@ -226,7 +226,7 @@ importing a new graph, just run `skyscope server`[^1].
 ### Extra context for targets and actions
 
 The output produced by `bazel dump --skyframe` is sufficient to determine the
-Skyframe graph toplogy, but for many node types it does not provide the full
+Skyframe graph topology, but for many node types it does not provide the full
 context. For example, an `ACTION_EXECUTION` node only has a reference to the
 `CONFIGURED_TARGET` that created it, a `BUILD_CONFIGURATION`, and an
 `actionIndex`:
