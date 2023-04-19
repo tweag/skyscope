@@ -4,13 +4,14 @@ module Main where
 
 import qualified Import
 import qualified Server
-import System.Environment (getArgs)
+import System.Environment (getArgs, unsetEnv)
 import System.Exit (exitFailure)
 import System.Posix.Daemonize (daemonize)
 import Text.Read (readMaybe)
 
 main :: IO ()
 main = do
+  unsetEnv "LD_LIBRARY_PATH"
   getArgs >>= \case
     ["import-skyframe", path] -> Import.importSkyframe path
     ["import-targets", path] -> Import.importTargets path
