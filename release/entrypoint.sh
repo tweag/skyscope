@@ -17,7 +17,25 @@ export BAZEL_VERSION="$(bazel version | grep -Po '(?<=Build label: ).*')"
 skyscope() {(
     cd "$RUNPATH"
     CLOSURE="${BASH_SOURCE[0]%/bin/skyscope}/closure"
-    LD_LIBRARY_PATH="$CLOSURE" "${SKYSCOPE_BINARY:-$CLOSURE/skyscope}" +RTS -N -RTS "$@"
+    SKYSCOPE_BINARY="${SKYSCOPE_BINARY:-$CLOSURE/skyscope}"
+
+    # Hack: fix interpreter on non-NixOS systems.
+    if ! patchelf --version; then
+        echo
+        echo "Warning: could not find patchelf"
+        echo "This tool is needed to patch the dynamic loader on Linux systems. Will attempt to continue anyway."
+        echo "If you get 'No such file or directory' errors, try installing 'patchelf' with your preferred package manager."
+        echo "    For example: sudo apt install patchelf"
+        echo
+    else
+        chmod u+w "$SKYSCOPE_BINARY"
+        INTERPRETER="$(patchelf --print-interpreter "$SKYSCOPE_BINARY")"
+        if [[ ! -x "$INTERPRETER" ]]; then
+            patchelf --set-interpreter "$CLOSURE/$(basename $INTERPRETER)" "$SKYSCOPE_BINARY"
+        fi
+    fi
+
+    LD_LIBRARY_PATH="$CLOSURE" "$SKYSCOPE_BINARY" +RTS -N -RTS "$@"
 )}
 
 # Check the required tools are available.
