@@ -57,8 +57,8 @@ hassle. Simply add the following to your `WORKSPACE` file:
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = "skyscope",
-    sha256 = "b22e68b65330a3666d0e97f859b06df976ee0e167082c1da84865a7d423bb7b5",
-    urls = ["https://github.com/tweag/skyscope/releases/download/v0.2.4/skyscope.zip"]
+    sha256 = "0879de9a63b2e634839e87c2662608ead07724259bc45e17ae061e1bbd45a376",
+    urls = ["https://github.com/tweag/skyscope/releases/download/v0.2.5/skyscope.zip"]
 )
 load("@skyscope//:repository.bzl", "configure_skyscope")
 configure_skyscope()
@@ -75,7 +75,7 @@ its `WORKSPACE` file.
 
 1. Go to the [releases page](https://github.com/tweag/skyscope/releases) and
 pick the version you want. The latest is
-[v0.2.4](https://github.com/tweag/skyscope/releases/v0.2.4).
+[v0.2.5](https://github.com/tweag/skyscope/releases/v0.2.5).
 
 2. Download a zip archive for your Operating System (currently supported are
 Linux and MacOS).
