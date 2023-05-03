@@ -283,9 +283,9 @@ commands can themselves cause nodes to be added to the graph).
 
 The default theme is embedded in the Skyscope binary, but you can make it use a
 local file instead by setting the `SKYSCOPE_THEME_CSS` environment variable
-(probably in `~/.bashrc` or equivalent). Note that if a Skyscope server is
-already running, it will not pick up the new environment variable until it is
-restarted (`pkill -x skyscope`).
+(probably in `~/.bashrc` or equivalent). Note that if the Skyscope server is
+already running, it will not pick up the new value until it is restarted
+(`pkill -f 'skyscope .* server'`).
 
 It is recommended that you begin by making a local copy of the [default
 theme](https://github.com/tweag/skyscope/blob/master/frontend/src/theme.css)
