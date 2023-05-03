@@ -17,7 +17,13 @@ export BAZEL_VERSION="$(bazel version | grep -Po '(?<=Build label: ).*')"
 skyscope() {(
     cd "$RUNPATH"
     CLOSURE="${BASH_SOURCE[0]%/bin/skyscope}/closure"
-    LD_LIBRARY_PATH="$CLOSURE" "${SKYSCOPE_BINARY:-$CLOSURE/skyscope}" +RTS -N -RTS "$@"
+    SKYSCOPE_BINARY="${SKYSCOPE_BINARY:-$CLOSURE/skyscope}"
+    CLOSURE_LD_LINUX="$CLOSURE/ld-linux-x86-64.so.2"
+    if [[ -x "$CLOSURE_LD_LINUX" ]]; then
+        "$CLOSURE_LD_LINUX" --library-path "$CLOSURE" "$SKYSCOPE_BINARY" +RTS -N -RTS "$@"
+    else
+        "$SKYSCOPE_BINARY" +RTS -N -RTS "$@"
+    fi
 )}
 
 # Check the required tools are available.
