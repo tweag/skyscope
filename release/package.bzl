@@ -74,7 +74,7 @@ def package_release(binary, platforms, url_base):
     )
     wrapper = lambda name: [
         "[[ \"${SKYSCOPE_DEBUG:-}\" ]] && set -x",
-        "RELEASE_DIR=$(find . -type d -name skyscope -printf \"$PWD/%P\\n\" -quit)",
+        "RELEASE_DIR=\"$PWD/$(find . -type d -name skyscope | head -1)\"",
         "export SKYSCOPE_BINARY=\"$RELEASE_DIR/closure/skyscope\"",
         "\"$RELEASE_DIR/bin/skyscope\" {} \"$@\"".format(name),
     ]
