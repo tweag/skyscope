@@ -74,7 +74,22 @@ def package_release(binary, platforms, url_base):
     )
     wrapper = lambda name: [
         "[[ \"${SKYSCOPE_DEBUG:-}\" ]] && set -x",
-        "RELEASE_DIR=\"$PWD/$(find . -type d -name skyscope | head -1)\"",
+        "while true; do",  # Search upward until we find the runfiles directory.
+        "    case \"$(basename \"$PWD\")\" in",
+        "      {}.runfiles)".format(name),
+        "        RELEASE_DIR=\"$PWD/$(find . -type d -name skyscope | head -1)\"",
+        "        break",
+        "        ;;",
+        "      /)",
+        "        echo 'failed to find runfiles directory'",
+        "        exit 1",
+        "        ;;",
+        "      *)",
+        "        cd ..",
+        "        continue",
+        "        ;;",
+        "    esac",
+        "done",
         "export SKYSCOPE_BINARY=\"$RELEASE_DIR/closure/skyscope\"",
         "\"$RELEASE_DIR/bin/skyscope\" {} \"$@\"".format(name),
     ]
