@@ -3,10 +3,10 @@ load(":package.bzl", "package_release")
 package_release(
     "//backend:skyscope",
     {
-        "@platforms//os:linux": "7f60d4ba7b7d65be9f5dd18b1e7d5911f42217d2801e2046771f2ec01a862f96",
-        "@platforms//os:macos": "4f60f8bef757aad434dc9950f4ea59c6b476ac336aca113700e36d4574721ae4",
+        "@platforms//os:linux": "290e383ce51cd9cc4492b4cbcc33d10df65bc3bb07e606808b7fda0db3ef445e",
+        "@platforms//os:macos": "ac5fda02a10cf8d902d16f2e4b6cb5d6234f5304946f3574cb4855a71bde89b8",
     },
-    "https://github.com/tweag/skyscope/releases/download/v0.2.6",
+    "https://github.com/tweag/skyscope/releases/download/v0.2.7",
 )
 
 exports_files(["entrypoint.sh"])
