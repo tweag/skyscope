@@ -5,7 +5,6 @@
 module Model where
 
 import Data.Aeson (FromJSON, ToJSON)
-import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)

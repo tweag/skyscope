@@ -13,6 +13,7 @@ main :: IO ()
 main = do
   unsetEnv "LD_LIBRARY_PATH"
   getArgs >>= \case
+    ["import-json", path] -> Import.importJson path
     ["import-skyframe", path] -> Import.importSkyframe path
     ["import-targets", path] -> Import.importTargets path
     ["import-actions", path] -> Import.importActions path

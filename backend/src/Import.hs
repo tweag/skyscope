@@ -17,6 +17,7 @@ import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
 import Control.Monad.State (evalState)
 import qualified Crypto.Hash.SHA256 as SHA256
+import qualified Data.Aeson as Json
 import qualified Data.Attoparsec.Combinator as Parser
 import Data.Attoparsec.Text (Parser)
 import qualified Data.Attoparsec.Text as Parser
@@ -40,6 +41,8 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import qualified Data.Text.IO as Text
+import qualified Data.Text.Lazy.Encoding as LazyText
+import qualified Data.Text.Lazy.IO as LazyText
 import qualified Data.Time.Clock as Clock
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData (..))
@@ -75,6 +78,12 @@ addContext database context = do
   let records = context <&> \(k, v) -> [SQLText k, SQLText v]
   Sqlite.batchInsert database "context" ["context_key", "context_data"] records
 
+importJson :: FilePath -> IO ()
+importJson path = withDatabase "importing json" path $ \database -> do
+  Json.eitherDecode . LazyText.encodeUtf8 <$> LazyText.getContents >>= \case
+    Left err -> error $ "invalid graph json: " <> err
+    Right graph -> importGraph database graph
+
 importSkyframe :: FilePath -> IO ()
 importSkyframe path = withDatabase "importing skyframe" path $ \database -> do
   legacy <- getSkyscopeEnv "LEGACY_BAZEL"
@@ -82,10 +91,14 @@ importSkyframe path = withDatabase "importing skyframe" path $ \database -> do
         if isJust legacy
           then skyframeParserLegacy
           else skyframeParser
-  (nodes, edges) <-
+  graph <-
     Text.getContents <&> Parser.parseOnly parser >>= \case
       Left err -> error $ "failed to parse skyframe graph: " <> err
       Right graph -> pure graph
+  importGraph database graph
+
+importGraph :: Database -> Graph -> IO ()
+importGraph database (nodes, edges) = do
   putStrLn $ "node count = " <> show (length nodes) <> ", edge count = " <> show (length edges)
   let assignIndex node = gets (,node) <* modify (+ 1)
       indexedNodes = evalState (for nodes assignIndex) 1
