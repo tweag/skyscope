@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ps --no-headers -eo "%P||%p||%c||%a" | jq -R '
+ps --no-headers -eo "%P||%p||%c||%a" | tr -d '"' | jq -R '
     split("|" + "|") | to_entries | map (
         if .key > 2 then
             .value
