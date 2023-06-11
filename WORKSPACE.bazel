@@ -76,7 +76,17 @@ stack_snapshot(
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
-nixpkgs_cc_configure(repository = "@nixpkgs")
+nixpkgs_cc_configure(
+    repository = "@nixpkgs",
+    nix_file_content = """\
+with import <nixpkgs> { config = {}; overlays = []; };
+buildEnv {
+  name = "bazel-cc-toolchain";
+  paths = [ pkgsMusl.stdenv.cc pkgsMusl.binutils ];
+  passthru = { isClang = pkgsMusl.stdenv.cc.isClang; };
+}
+""",
+)
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
 
@@ -85,16 +95,26 @@ nixpkgs_python_configure(repository = "@nixpkgs")
 load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
 
 haskell_register_ghc_nixpkgs(
-    attribute_path = "ghc",
+    attribute_path = "",
+    nix_file_content = """\
+with import <nixpkgs> {};
+pkgsMusl.haskell.compiler.ghc902.override { enableRelocatedStaticLibs = true; enableShared = false; }
+""",
     repository = "@nixpkgs",
     version = "9.0.2",
+    static_runtime = True,
+    fully_static_link = True,
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
 
 nixpkgs_package(
     name = "nixpkgs_zlib",
-    attribute_path = "zlib",
+    nix_file_content = """\
+with import <nixpkgs> { config = {}; overlays = []; };
+( pkgsMusl.zlib.override { static=true; shared=false; }
+).overrideAttrs (_:{ dontDisableStatic=true; })
+""",
     repository = "@nixpkgs",
 )
 

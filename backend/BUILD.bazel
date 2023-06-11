@@ -62,6 +62,7 @@ haskell_binary(
         "@stackage//:warp",
         "@stackage//:zlib",
     ],
+    features = ["fully_static_link"],
 )
 
 cc_library(
