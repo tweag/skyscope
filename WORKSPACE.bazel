@@ -4,9 +4,9 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
     name = "io_tweag_rules_nixpkgs",
-    sha256 = "1f3d86577eb1b85881f60c9eb1eb420c64d2ec8b9c951dbd66394db20cb5ddb1",
-    strip_prefix = "rules_nixpkgs-d28e07001f2c2386162cb51964f02f6c9b67628a",
-    urls = ["https://github.com/tweag/rules_nixpkgs/archive/d28e07001f2c2386162cb51964f02f6c9b67628a.tar.gz"],
+    sha256 = "9e3898a33c5f21f634aa9e2d45620e7c4b6d54d16d473571a891193bbd4725ca",
+    strip_prefix = "rules_nixpkgs-0c1f8f5470c7f292b7620762e224f53d837929d3",
+    urls = ["https://github.com/tweag/rules_nixpkgs/archive/0c1f8f5470c7f292b7620762e224f53d837929d3.tar.gz"],
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:repositories.bzl", "rules_nixpkgs_dependencies")
@@ -97,10 +97,21 @@ load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
 haskell_register_ghc_nixpkgs(
     attribute_path = "",
     nix_file_content = """\
-with import <nixpkgs> {};
-pkgsMusl.haskell.compiler.ghc902.override { enableRelocatedStaticLibs = true; enableShared = false; }
+let
+  pkgs = import <nixpkgs> {};
+  static-haskell-nix = import <static-haskell-nix> { normalPkgs = pkgs; };
+  inherit (static-haskell-nix) pkgsWithArchiveFiles;
+in
+pkgsWithArchiveFiles.haskell.compiler.ghc902.override {
+  enableRelocatedStaticLibs = true;
+  enableShared = false;
+}
 """,
-    repository = "@nixpkgs",
+    repositories = {
+        "nixpkgs": "@nixpkgs",
+        "static-haskell-nix": "@static-haskell-nix//:survey/default.nix",
+    },
+    nixopts = ["--builders", "@/etc/nix/machines", "-j0"],
     version = "9.0.2",
     static_runtime = True,
     fully_static_link = True,
@@ -142,6 +153,14 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_local_repository")
 nixpkgs_local_repository(
     name = "nixpkgs",
     nix_flake_lock_file = "//:flake.lock",
+)
+
+load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_http_repository")
+
+nixpkgs_http_repository(
+    name = "static-haskell-nix",
+    url = "https://github.com/nh2/static-haskell-nix/archive/bd66b86b72cff4479e1c76d5916a853c38d09837.tar.gz",
+    strip_prefix = "static-haskell-nix-bd66b86b72cff4479e1c76d5916a853c38d09837",
 )
 
 nixpkgs_package(
