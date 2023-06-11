@@ -76,6 +76,7 @@ stack_snapshot(
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
+# TODO[AH] Replace this by global Nix configuration for appropriate Nix cache.
 static_nixopts = ["--builders", "@/etc/nix/machines", "-j0"]
 
 nixpkgs_cc_configure(
@@ -91,6 +92,7 @@ load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
 
 haskell_register_ghc_nixpkgs(
     attribute_path = "",
+    # TODO[AH] Upstream and expose through a Nix cache.
     nix_file_content = """\
 with import <nixpkgs> { config = {}; overlays = []; };
 haskell.compiler.ghc902.override {
