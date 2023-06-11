@@ -76,16 +76,11 @@ stack_snapshot(
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
+static_nixopts = ["--builders", "@/etc/nix/machines", "-j0"]
+
 nixpkgs_cc_configure(
-    repository = "@nixpkgs",
-    nix_file_content = """\
-with import <nixpkgs> { config = {}; overlays = []; };
-buildEnv {
-  name = "bazel-cc-toolchain";
-  paths = [ pkgsMusl.stdenv.cc pkgsMusl.binutils ];
-  passthru = { isClang = pkgsMusl.stdenv.cc.isClang; };
-}
-""",
+    repository = "@static-nixpkgs",
+    nixopts = static_nixopts,
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
@@ -97,21 +92,14 @@ load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
 haskell_register_ghc_nixpkgs(
     attribute_path = "",
     nix_file_content = """\
-let
-  pkgs = import <nixpkgs> {};
-  static-haskell-nix = import <static-haskell-nix> { normalPkgs = pkgs; };
-  inherit (static-haskell-nix) pkgsWithArchiveFiles;
-in
-pkgsWithArchiveFiles.haskell.compiler.ghc902.override {
+with import <nixpkgs> { config = {}; overlays = []; };
+haskell.compiler.ghc902.override {
   enableRelocatedStaticLibs = true;
   enableShared = false;
 }
 """,
-    repositories = {
-        "nixpkgs": "@nixpkgs",
-        "static-haskell-nix": "@static-haskell-nix//:survey/default.nix",
-    },
-    nixopts = ["--builders", "@/etc/nix/machines", "-j0"],
+    repository = "@static-nixpkgs",
+    nixopts = static_nixopts,
     version = "9.0.2",
     static_runtime = True,
     fully_static_link = True,
@@ -121,12 +109,9 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
 
 nixpkgs_package(
     name = "nixpkgs_zlib",
-    nix_file_content = """\
-with import <nixpkgs> { config = {}; overlays = []; };
-( pkgsMusl.zlib.override { static=true; shared=false; }
-).overrideAttrs (_:{ dontDisableStatic=true; })
-""",
-    repository = "@nixpkgs",
+    attribute_path = "zlib.static",
+    repository = "@static-nixpkgs",
+    nixopts = static_nixopts,
 )
 
 nixpkgs_package(
@@ -155,12 +140,10 @@ nixpkgs_local_repository(
     nix_flake_lock_file = "//:flake.lock",
 )
 
-load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_http_repository")
-
-nixpkgs_http_repository(
-    name = "static-haskell-nix",
-    url = "https://github.com/nh2/static-haskell-nix/archive/bd66b86b72cff4479e1c76d5916a853c38d09837.tar.gz",
-    strip_prefix = "static-haskell-nix-bd66b86b72cff4479e1c76d5916a853c38d09837",
+nixpkgs_local_repository(
+    name = "static-nixpkgs",
+    nix_file = "//:static-nixpkgs.nix",
+    nix_file_deps = ["//:flake.lock"],
 )
 
 nixpkgs_package(
