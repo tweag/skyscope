@@ -11,6 +11,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include <charconv>
 
 #include "sqlite3.h"
 
@@ -53,6 +54,9 @@ class ParseState {
             auto pos = buffer.cbegin() + position;
             return string_view(pos, buffer.cend());
         }
+
+        int source = 0;
+        int group = 0;
 
         bool feed(int n) {
             buffer.erase(buffer.begin(), buffer.begin() + position);
@@ -150,8 +154,46 @@ ParseResult parseNodeBazel6(ParseState& state, Graph& graph) { /*
     GREEN_NODE:NodeData{aab8e2e}
       Group 1:
         RED_NODE:NodeData{5cedeee}
-*/  state.error("not implemented");
-    return ParseResult::FAIL;
+*/  
+    while (true) {
+        auto remaining = state.remaining();
+        auto eol = remaining.find("\n");
+        if (eol == string::npos) {
+            // line is partial
+            return ParseResult::MORE;
+        } else if (eol == 0) {
+            // skip empty lines
+            state.advance(1);
+            continue;
+        }
+        auto indent = remaining.find_first_not_of(" ", 0, eol);
+        auto node = string(remaining.substr(indent, eol - indent));
+        if (indent == 0) {
+            // A new node
+            state.source = 0;
+        } else if (indent == 2) {
+            // A new group
+            state.group = stoi(node.substr(6) /* "Group ".length() */);
+            state.advance(eol+1);
+            continue;
+        } else if (indent == 4) {
+            // A new link node
+        }
+        auto colon = node.find(':');
+        if (colon == string::npos) {
+            state.error("missing colon in key");
+            return ParseResult::FAIL;
+        }
+        auto type = string(node.substr(0, colon));
+        auto idx = assignNodeIdx(graph.nodes.emplace_back(0, "", node, type));
+        if (state.source == 0) {
+            state.source = idx;
+        } else {
+            graph.edges.emplace_back(state.source, idx, state.group);
+        }
+        state.advance(eol+1);
+        return ParseResult::DONE;
+    }
 }
 
 ParseResult parseNode(ParseState& state, Graph& graph) {
