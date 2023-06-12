@@ -17,6 +17,11 @@
 
 using namespace std;
 
+void raise(const char* s) {
+    cerr << "error: throw: " << s << endl;
+    throw s;
+}
+
 constexpr auto BATCH_SIZE = 1024;         // records per insert statement
 constexpr auto CHUNK_SIZE = 1024 * 1024;  // size of stdin chunks to parse
 
@@ -157,6 +162,7 @@ ParseResult parseNodeBazel6(ParseState& state, Graph& graph) { /*
 */  
     while (true) {
         auto remaining = state.remaining();
+        // cerr << "remaining: " << remaining.substr(0, 80) << "..." << endl << "[...]" << endl;
         auto eol = remaining.find("\n");
         if (eol == string::npos) {
             // line is partial
@@ -164,10 +170,12 @@ ParseResult parseNodeBazel6(ParseState& state, Graph& graph) { /*
         } else if (eol == 0) {
             // skip empty lines
             state.advance(1);
-            continue;
+            return ParseResult::DONE;
         }
-        auto indent = remaining.find_first_not_of(" ", 0, eol);
+        auto indent = remaining.find_first_not_of(' ');
+        // cerr << "indent: " << indent << ", eol:" << eol << endl;
         auto node = string(remaining.substr(indent, eol - indent));
+        // cerr << "node: " << node << endl;
         if (indent == 0) {
             // A new node
             state.source = 0;
@@ -175,12 +183,16 @@ ParseResult parseNodeBazel6(ParseState& state, Graph& graph) { /*
             // A new group
             state.group = stoi(node.substr(6) /* "Group ".length() */);
             state.advance(eol+1);
-            continue;
+            return ParseResult::DONE;
         } else if (indent == 4) {
             // A new link node
+        } else {
+            state.error("invalid indent encountered");
+            return ParseResult::FAIL;
         }
         auto colon = node.find(':');
         if (colon == string::npos) {
+            // cerr << node << endl;
             state.error("missing colon in key");
             return ParseResult::FAIL;
         }
@@ -208,8 +220,8 @@ sqlite3_stmt* memoize(auto& map, int key) {
     auto iter = map.find(key);
     if (iter !=  map.end()) {
         const auto stmt = iter->second;
-        if (sqlite3_reset(stmt) != SQLITE_OK) throw "sqlite3_reset";
-        if (sqlite3_clear_bindings(stmt) != SQLITE_OK) throw "sqlite3_clear_bindings";
+        if (sqlite3_reset(stmt) != SQLITE_OK) raise("sqlite3_reset");
+        if (sqlite3_clear_bindings(stmt) != SQLITE_OK) raise("sqlite3_clear_bindings");
         return stmt;
     }
     return nullptr;
@@ -229,7 +241,7 @@ sqlite3_stmt* prepareInsertNodeStmt(sqlite3* db, int count) {
     }
     stream << ";";
     const auto& sql = stream.str();
-    if (sqlite3_prepare_v2(db, sql.c_str(), sql.length(), &stmt, nullptr) != SQLITE_OK) throw "prepare node stmt";
+    if (sqlite3_prepare_v2(db, sql.c_str(), sql.length(), &stmt, nullptr) != SQLITE_OK) raise("prepare node stmt");
     stmts[count] = stmt;
     return stmt;
 }
@@ -248,7 +260,7 @@ sqlite3_stmt* prepareInsertEdgeStmt(sqlite3* db, int count) {
     }
     stream << ";";
     const auto& sql = stream.str();
-    if (sqlite3_prepare_v2(db, sql.c_str(), sql.length(), &stmt, nullptr) != SQLITE_OK) throw "prepare edge stmt";
+    if (sqlite3_prepare_v2(db, sql.c_str(), sql.length(), &stmt, nullptr) != SQLITE_OK) raise("prepare edge stmt");
     stmts[count] = stmt;
     return stmt;
 }
@@ -257,9 +269,9 @@ void bindInsertNodeStmt(sqlite3_stmt* stmt, span<const Node, dynamic_extent> val
     int param = 0;
     for (const auto& row : values) {
         auto bindText = [&](const auto& text, const char* err) {
-            if (sqlite3_bind_text(stmt, ++param, text.c_str(), text.size(), SQLITE_TRANSIENT) != SQLITE_OK) throw err;
+            if (sqlite3_bind_text(stmt, ++param, text.c_str(), text.size(), SQLITE_TRANSIENT) != SQLITE_OK) raise(err);
         };
-        if (sqlite3_bind_int(stmt, ++param, row.idx) != SQLITE_OK) throw "bind idx failed";
+        if (sqlite3_bind_int(stmt, ++param, row.idx) != SQLITE_OK) raise("bind idx failed");
         bindText(row.hash, "bind hash failed");
         bindText(row.data, "bind data failed");
         bindText(row.type, "bind type failed");
@@ -269,9 +281,9 @@ void bindInsertNodeStmt(sqlite3_stmt* stmt, span<const Node, dynamic_extent> val
 void bindInsertEdgeStmt(sqlite3_stmt* stmt, span<const Edge, dynamic_extent> values) {
     int param = 0;
     for (const auto& row : values) {
-        if (sqlite3_bind_int(stmt, ++param, row.source) != SQLITE_OK) throw "bind source failed";
-        if (sqlite3_bind_int(stmt, ++param, row.target) != SQLITE_OK) throw "bind target failed";
-        if (sqlite3_bind_int(stmt, ++param, row.groupNum) != SQLITE_OK) throw "bind group_num failed";
+        if (sqlite3_bind_int(stmt, ++param, row.source) != SQLITE_OK) raise("bind source failed");
+        if (sqlite3_bind_int(stmt, ++param, row.target) != SQLITE_OK) raise("bind target failed");
+        if (sqlite3_bind_int(stmt, ++param, row.groupNum) != SQLITE_OK) raise("bind group_num failed");
     }
 }
 
@@ -296,9 +308,9 @@ extern "C" bool c_importSkyframe(const char* dbPath) {
         "pragma synchronous = off;\n"
         "pragma journal_mode = MEMORY;\n"
         "pragma mmap_size = 1073741824;\n";
-    if (sqlite3_initialize() != SQLITE_OK) throw "sqlite3_initialize";
-    if (sqlite3_open(dbPath, &db) != SQLITE_OK) throw "sqlite3_open";
-    if (sqlite3_exec(db, pragmaSql, nullptr, nullptr, nullptr) != SQLITE_OK) throw "sqlite pragma";
+    if (sqlite3_initialize() != SQLITE_OK) raise("sqlite3_initialize");
+    if (sqlite3_open(dbPath, &db) != SQLITE_OK) raise("sqlite3_open");
+    if (sqlite3_exec(db, pragmaSql, nullptr, nullptr, nullptr) != SQLITE_OK) raise("sqlite pragma");
 
     // Skip over the warning heading.
     bool eof = state.feed(CHUNK_SIZE);
@@ -329,10 +341,14 @@ extern "C" bool c_importSkyframe(const char* dbPath) {
                     auto stmt = prepare(db, batch.size());
                     bind(stmt, batch);
                     if (sqlite3_step(stmt) != SQLITE_DONE) {
-                        throw "insert failed";
+                        cerr << stmt << endl;
+                        cerr << sqlite3_errmsg(db) << endl;
+                        raise("insert failed");
+                        break;
                     }
                 }
                 count += records.size();
+                cerr << count << endl;
             };
             batched(subgraph.nodes, prepareInsertNodeStmt, bindInsertNodeStmt, nodeCount);
             batched(subgraph.edges, prepareInsertEdgeStmt, bindInsertEdgeStmt, edgeCount);
