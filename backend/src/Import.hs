@@ -16,14 +16,8 @@ import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVar, readT
 import Control.Monad (guard)
 import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
-import qualified Crypto.Hash.SHA256 as SHA256
-import qualified Data.Attoparsec.Combinator as Parser
-import Data.Attoparsec.Text (Parser)
-import qualified Data.Attoparsec.Text as Parser
-import Data.Bifunctor (first, second)
+import Data.Bifunctor (first)
 import qualified Data.ByteString as BS
-import Data.ByteString.Builder (byteStringHex, toLazyByteString)
-import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.FileEmbed (embedFile)
 import Data.Foldable (asum, for_)
 import Data.Function ((&))
@@ -33,9 +27,7 @@ import qualified Data.IntMap as IntMap
 import Data.List (sortOn, uncons)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, isJust)
-import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -48,7 +40,6 @@ import Foreign.C.Types (CInt (..), CLong (..))
 import qualified Foreign.Marshal.Array as Marshal
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (sizeOf)
-import Model
 import Sqlite (Database)
 import qualified Sqlite
 import Prelude
@@ -174,124 +165,6 @@ findLine prefix paragraph =
           Nothing -> find lines
           Just text -> text
    in find $ Text.lines paragraph
-
-keyParser :: Parser (NodeHash, Node)
-keyParser = do
-  nodeType <- Parser.takeWhile1 $ \c -> c /= ':' && c /= '\n'
-  void $ Parser.char ':'
-  nodeData <- Parser.takeTill $ \c -> c == '|' || c == '\n'
-  let nodeHash =
-        Text.decodeUtf8 $
-          LBSC.toStrict $
-            toLazyByteString $
-              byteStringHex $ SHA256.hash $ Text.encodeUtf8 $ nodeType <> ":" <> nodeData
-  pure (nodeHash, Node nodeData nodeType)
-
-skippingWarning :: Parser a -> Parser a
-skippingWarning parser = do
-  void $ Parser.option "" $ Parser.string "Warning:"
-  void $ Parser.manyTill Parser.anyChar $ Parser.string "\n\n"
-  parser
-
-skyframeParserLegacy :: Parser Graph
-skyframeParserLegacy = skippingWarning $ do
-  graph <- mconcat <$> nodeParser `Parser.sepBy1` Parser.endOfLine
-  Parser.skipSpace
-  Parser.endOfInput
-  pure graph
-  where
-    nodeParser :: Parser Graph
-    nodeParser = do
-      source@(sourceHash, _) <- keyParser <* Parser.char '|'
-      keyParser `Parser.sepBy` Parser.char '|' <&> \targets ->
-        ( Map.fromList $ source : targets,
-          Set.fromList $ Edge 0 sourceHash . fst <$> targets
-        )
-
-skyframeExampleLegacy :: Text
-skyframeExampleLegacy =
-  Text.unlines
-    [ "Warning: the format of this information may change etc!",
-      "",
-      "BLUE_NODE:NodeData{e247f4c}|",
-      "RED_NODE:NodeData{6566162}|GREEN_NODE:NodeData{aab8e2e}|BLUE_NODE:NodeData{e247f4c}|RED_NODE:NodeData{5cedeee}",
-      "RED_NODE:NodeData{5cedeee}|GREEN_NODE:NodeData{aab8e2e}",
-      "GREEN_NODE:NodeData{aab8e2e}|RED_NODE:NodeData{5cedeee}"
-    ]
-
-skyframeParser :: Parser Graph
-skyframeParser = skippingWarning $ do
-  graph <- mconcat <$> Parser.many1 nodeParser
-  Parser.skipSpace
-  Parser.endOfInput
-  pure graph
-  where
-    nodeParser :: Parser Graph
-    nodeParser = do
-      Parser.skipSpace
-      (sourceHash, sourceNode) <- keyParser
-      targets <- concat . traverse sequenceA <$> Parser.many' groupParser
-      pure $
-        mconcat $
-          targets <&> \(groupNum, (targetHash, targetNode)) ->
-            ( Map.fromList [(sourceHash, sourceNode), (targetHash, targetNode)],
-              Set.singleton $ Edge groupNum sourceHash targetHash
-            )
-
-    groupParser :: Parser (Int, [(NodeHash, Node)])
-    groupParser = do
-      Parser.skipSpace
-      void $ Parser.string "Group "
-      groupNum <- Parser.decimal
-      void $ Parser.char ':'
-      fmap (groupNum,) $
-        Parser.many1 $ do
-          Parser.endOfLine
-          void $ Parser.string "    "
-          keyParser <* Parser.endOfLine
-
-skyframeExample :: Text
-skyframeExample =
-  Text.unlines
-    [ "Warning: the format of this information may change etc!",
-      "",
-      "BLUE_NODE:NodeData{e247f4c}",
-      "",
-      "RED_NODE:NodeData{6566162}",
-      "",
-      "  Group 1:",
-      "    BLUE_NODE:NodeData{e247f4c}",
-      "",
-      "    GREEN_NODE:NodeData{aab8e2e}",
-      "",
-      "  Group 2:",
-      "    RED_NODE:NodeData{5cedeee}",
-      "",
-      "",
-      "RED_NODE:NodeData{5cedeee}",
-      "",
-      "  Group 1:",
-      "    GREEN_NODE:NodeData{aab8e2e}",
-      "",
-      "",
-      "GREEN_NODE:NodeData{aab8e2e}",
-      "",
-      "  Group 1:",
-      "    RED_NODE:NodeData{5cedeee}",
-      "",
-      ""
-    ]
-
-checkSkyframeParserEquivalence :: IO ()
-checkSkyframeParserEquivalence = do
-  let zeroEdges = second $ Set.map $ \(Edge _ s t) -> Edge 0 s t
-      resultLegacy = Parser.parseOnly skyframeParserLegacy skyframeExampleLegacy
-      result = Parser.parseOnly skyframeParser skyframeExample
-  if resultLegacy == (zeroEdges <$> result)
-    then pure ()
-    else error $ "parsers not equivalent"
-
--- $> putStrLn $ Data.Text.unpack Import.skyframeExample
 
 indexPaths :: Database -> TVar (Int, Int) -> IO ()
 indexPaths database progress = do
