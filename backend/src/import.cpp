@@ -348,7 +348,7 @@ extern "C" bool c_importSkyframe(const char* dbPath) {
                     }
                 }
                 count += records.size();
-                cerr << count << endl;
+                //cerr << count << endl;
             };
             batched(subgraph.nodes, prepareInsertNodeStmt, bindInsertNodeStmt, nodeCount);
             batched(subgraph.edges, prepareInsertEdgeStmt, bindInsertEdgeStmt, edgeCount);
