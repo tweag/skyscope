@@ -55,8 +55,8 @@ class ParseState {
         void advance(int n) { position += n; }
 
         auto remaining() {
-            auto pos = buffer.cbegin() + position;
-            return string_view(pos, buffer.cend());
+            auto pos = buffer.data() + position;
+            return string_view(pos, buffer.size() - position);
         }
 
         int source = 0;
