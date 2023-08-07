@@ -264,9 +264,10 @@ sqlite3_stmt* prepareInsertEdgeStmt(sqlite3* db, int count) {
     return stmt;
 }
 
-void bindInsertNodeStmt(sqlite3_stmt* stmt, span<const Node, dynamic_extent> values) {
+void bindInsertNodeStmt(sqlite3_stmt* stmt, const Node* begin, const Node* end) {
     int param = 0;
-    for (const auto& row : values) {
+    for (auto i = begin; i != end; ++i) {
+        const auto& row = *i;
         auto bindText = [&](const auto& text, const char* err) {
             if (sqlite3_bind_text(stmt, ++param, text.c_str(), text.size(), SQLITE_TRANSIENT) != SQLITE_OK) raise(err);
         };
@@ -277,9 +278,10 @@ void bindInsertNodeStmt(sqlite3_stmt* stmt, span<const Node, dynamic_extent> val
     }
 }
 
-void bindInsertEdgeStmt(sqlite3_stmt* stmt, span<const Edge, dynamic_extent> values) {
+void bindInsertEdgeStmt(sqlite3_stmt* stmt, const Edge* begin, const Edge* end) {
     int param = 0;
-    for (const auto& row : values) {
+    for (auto i = begin; i != end; ++i) {
+        const auto& row = *i;
         if (sqlite3_bind_int(stmt, ++param, row.source) != SQLITE_OK) raise("bind source failed");
         if (sqlite3_bind_int(stmt, ++param, row.target) != SQLITE_OK) raise("bind target failed");
         if (sqlite3_bind_int(stmt, ++param, row.groupNum) != SQLITE_OK) raise("bind group_num failed");
@@ -336,9 +338,10 @@ extern "C" bool c_importSkyframe(const char* dbPath) {
         ] {
             auto batched = [&](const auto& records, auto prepare, auto bind, auto& count) {
                 for (auto i = records.begin(); i < records.end(); i += BATCH_SIZE) {
-                    auto batch = span(i, min(i + BATCH_SIZE, records.end()));
-                    auto stmt = prepare(db, batch.size());
-                    bind(stmt, batch);
+                    auto batchBegin = &*i;
+                    auto batchEnd = &*min(i + BATCH_SIZE, records.end());
+                    auto stmt = prepare(db, batchEnd - batchBegin);
+                    bind(stmt, batchBegin, batchEnd);
                     if (sqlite3_step(stmt) != SQLITE_DONE) {
                         cerr << stmt << endl;
                         cerr << sqlite3_errmsg(db) << endl;
