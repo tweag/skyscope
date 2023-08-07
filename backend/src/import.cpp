@@ -134,11 +134,12 @@ ParseResult parseNodeBazel5(ParseState& state, Graph& graph) { /*
         }
         state.advance(end + 1);
         string type = string(data.substr(0, colon));
-        auto idx = assignNodeIdx(graph.nodes.emplace_back(0, "", data, type));
+        graph.nodes.push_back(Node{0, "", data, type});
+        auto idx = assignNodeIdx(graph.nodes.back());
         if (source == 0) {
             source = idx;
         } else {
-            graph.edges.emplace_back(source, idx, 0);
+            graph.edges.push_back(Edge{source, idx, 0});
         }
         if (end == eol) return ParseResult::DONE;
     }
@@ -196,11 +197,12 @@ ParseResult parseNodeBazel6(ParseState& state, Graph& graph) { /*
             return ParseResult::FAIL;
         }
         auto type = string(node.substr(0, colon));
-        auto idx = assignNodeIdx(graph.nodes.emplace_back(0, "", node, type));
+        graph.nodes.push_back(Node{0, "", node, type});
+        auto idx = assignNodeIdx(graph.nodes.back());
         if (state.source == 0) {
             state.source = idx;
         } else {
-            graph.edges.emplace_back(state.source, idx, state.group);
+            graph.edges.push_back(Edge{state.source, idx, state.group});
         }
         state.advance(eol+1);
         return ParseResult::DONE;
