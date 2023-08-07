@@ -288,7 +288,7 @@ void bindInsertEdgeStmt(sqlite3_stmt* stmt, span<const Edge, dynamic_extent> val
 
 extern "C" bool c_importSkyframe(const char* dbPath) {
     cerr << "c_importSkyframe: " << dbPath << endl;
-    auto [nodeCount, edgeCount] = make_pair(0, 0);
+    auto nodeCount = 0, edgeCount = 0;
     auto updateProgress = [&](bool finished = false) {
         auto ansi = finished ? "0" : "37";
         cerr << "\x1b[1F\x1b[2K\x1b[" << ansi << "mimported "
