@@ -14,6 +14,13 @@ haskell_binary(
         ":src/Server.hs",
         ":src/Sqlite.hs",
     ],
+    extra_srcs = [
+        "//frontend:main.js",
+        "//frontend:src/index.js",
+        "//frontend:src/format.js",
+        "//frontend:src/theme.css",
+        "//backend:src/schema.sql",
+    ],
     ghcopts = [
         "-O2",
         "-Wall",
@@ -23,18 +30,11 @@ haskell_binary(
         "-fobject-code",
         "-threaded",
     ],
-    extra_srcs = [
-        "//frontend:main.js",
-        "//frontend:src/index.js",
-        "//frontend:src/format.js",
-        "//frontend:src/theme.css",
-        "//backend:src/schema.sql",
-    ],
     visibility = ["//visibility:public"],
     deps = [
         ":base",
-        ":path",
         ":import",
+        ":path",
         "@stackage//:HList",
         "@stackage//:aeson",
         "@stackage//:attoparsec",
@@ -81,7 +81,7 @@ cc_library(
 cc_library(
     name = "import",
     srcs = [":src/import.cpp"],
-    deps = ["@sqlite.dev"],
-    linkstatic = True,
     copts = copts,
+    linkstatic = True,
+    deps = ["@sqlite.dev"],
 )

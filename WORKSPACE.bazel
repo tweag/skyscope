@@ -107,7 +107,6 @@ nixpkgs_package(
 nixpkgs_package(
     name = "sqlite.dev",
     build_file = "//backend:sqlite.BUILD.bazel",
-    repository = "@nixpkgs",
     nix_file_content = """
         let pkgs = import <nixpkgs> { };
         in pkgs.buildEnv {
@@ -115,6 +114,7 @@ nixpkgs_package(
           paths = [ pkgs.sqlite.dev pkgs.sqlite.out ];
         }
     """,
+    repository = "@nixpkgs",
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_local_repository")
