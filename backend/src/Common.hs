@@ -15,7 +15,7 @@ import System.Environment (lookupEnv)
 type Memoize e a = ReaderT e IO a
 
 memoize ::
-  (Ord k, Show k, Show a) =>
+  (Ord k, Show k {- , Show a -}) =>
   String ->
   (e -> TVar (Map k a)) ->
   (k -> Memoize e a) ->
@@ -28,7 +28,7 @@ memoize label memo action key = do
     Nothing ->
       action key >>= \value -> liftIO $ do
         atomically $ modifyTVar memo $ Map.insert key value
-        value <$ log 31 "miss\x1b[0m" (ansi 37 "  →   " <> show value)
+        value <$ log 31 "miss\x1b[0m" (ansi 37 "  →   " <> {-show value-} "<value>")
   where
     ansi :: Integer -> String -> String
     ansi n s = "\x1b[" <> show n <> "m" <> s <> "\x1b[0m"

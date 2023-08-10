@@ -14,7 +14,14 @@ haskell_binary(
         ":src/Server.hs",
         ":src/Sqlite.hs",
     ],
-    compiler_flags = [
+    extra_srcs = [
+        "//frontend:main.js",
+        "//frontend:src/index.js",
+        "//frontend:src/format.js",
+        "//frontend:src/theme.css",
+        "//backend:src/schema.sql",
+    ],
+    ghcopts = [
         "-O2",
         "-Wall",
         "-Werror",
@@ -23,16 +30,10 @@ haskell_binary(
         "-fobject-code",
         "-threaded",
     ],
-    extra_srcs = [
-        "//frontend:main.js",
-        "//frontend:src/index.js",
-        "//frontend:src/format.js",
-        "//frontend:src/theme.css",
-        "//backend:src/schema.sql",
-    ],
     visibility = ["//visibility:public"],
     deps = [
         ":base",
+        ":import",
         ":path",
         "@stackage//:HList",
         "@stackage//:aeson",
@@ -65,13 +66,23 @@ haskell_binary(
     features = ["fully_static_link"],
 )
 
+copts = [
+    "-O2",
+    "-Wall",
+    "-Werror",
+    "-std=c++20",
+]
+
 cc_library(
     name = "path",
     srcs = [":src/path.cpp"],
-    copts = [
-        "-O2",
-        "-Wall",
-        "-Werror",
-        "-std=c++17",
-    ],
+    copts = copts,
+)
+
+cc_library(
+    name = "import",
+    srcs = [":src/import.cpp"],
+    copts = copts,
+    linkstatic = True,
+    deps = ["@sqlite.dev"],
 )
