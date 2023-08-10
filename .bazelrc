@@ -7,8 +7,8 @@ build:ci-windows --crosstool_top=@rules_haskell_ghc_windows_amd64//:cc_toolchain
 
 # This project uses a GHC provisioned via nix.
 # We need to use the rules_haskell nix toolchain accordingly:
-build --host_platform=@io_tweag_rules_nixpkgs//nixpkgs/platforms:host
-run --host_platform=@io_tweag_rules_nixpkgs//nixpkgs/platforms:host
+build --host_platform=//backend:regular_executable --incompatible_enable_cc_toolchain_resolution
+run --host_platform=//backend:regular_executable --incompatible_enable_cc_toolchain_resolution
 
 # test environment does not propagate locales by default
 # some tests reads files written in UTF8, we need to propagate the correct
