@@ -7,7 +7,10 @@ filegroup(
 )
 cc_library(
     name = "zlib",
-    srcs = ["@nixpkgs_zlib//:lib"],
+    srcs = select({
+        "@//backend:regular_linking": ["@nixpkgs_zlib//:lib"],
+        "@//backend:fully_static_linking": ["@nixpkgs_zlib.static//:lib"],
+    }),
     hdrs = [":include"],
     strip_include_prefix = "include",
     visibility = ["//visibility:public"],
