@@ -124,6 +124,12 @@ nixpkgs_local_repository(
     nix_flake_lock_file = "//:flake.lock",
 )
 
+nixpkgs_local_repository(
+    name = "static-nixpkgs",
+    nix_file = "//:static-nixpkgs.nix",
+    nix_file_deps = ["//:flake.lock"],
+)
+
 nixpkgs_package(
     name = "esbuild",
     repository = "@nixpkgs",
