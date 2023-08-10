@@ -84,7 +84,8 @@ nixpkgs_cc_configure(
 )
 
 # TODO[AH] Replace this by global Nix configuration for appropriate Nix cache.
-static_nixopts = ["--builders", "@/etc/nix/machines", "-j0"]
+#static_nixopts = ["--builders", "@/etc/nix/machines", "-j0"]
+static_nixopts = []
 
 nixpkgs_cc_configure(
     name = "local_config_cc_static",
