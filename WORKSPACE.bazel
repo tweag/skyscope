@@ -77,7 +77,7 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
 nixpkgs_cc_configure(
-    name = "local_config_cc",
+    name = "local_config_cc_regular",
     repository = "@nixpkgs",
     exec_constraints = ["@//backend:regular_linking"],
     target_constraints = ["@//backend:regular_linking"],
@@ -102,7 +102,7 @@ nixpkgs_python_configure(repository = "@nixpkgs")
 load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
 
 haskell_register_ghc_nixpkgs(
-    name = "rules_haskell",
+    name = "rules_haskell_regular",
     attribute_path = "ghc",
     repository = "@nixpkgs",
     version = "9.0.2",
