@@ -78,6 +78,9 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
 nixpkgs_cc_configure(repository = "@nixpkgs")
 
+# TODO[AH] Replace this by global Nix configuration for appropriate Nix cache.
+static_nixopts = ["--builders", "@/etc/nix/machines", "-j0"]
+
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
 
 nixpkgs_python_configure(repository = "@nixpkgs")
