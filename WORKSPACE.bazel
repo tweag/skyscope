@@ -77,6 +77,7 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
 nixpkgs_cc_configure(
+    name = "local_config_cc",
     repository = "@nixpkgs",
     exec_constraints = ["@//backend:regular_linking"],
     target_constraints = ["@//backend:regular_linking"],
@@ -85,6 +86,14 @@ nixpkgs_cc_configure(
 # TODO[AH] Replace this by global Nix configuration for appropriate Nix cache.
 static_nixopts = ["--builders", "@/etc/nix/machines", "-j0"]
 
+nixpkgs_cc_configure(
+    name = "local_config_cc_static",
+    repository = "@static-nixpkgs",
+    nixopts = static_nixopts,
+    exec_constraints = ["@//backend:fully_static_linking"],
+    target_constraints = ["@//backend:fully_static_linking"],
+)
+
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
 
 nixpkgs_python_configure(repository = "@nixpkgs")
@@ -92,11 +101,32 @@ nixpkgs_python_configure(repository = "@nixpkgs")
 load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
 
 haskell_register_ghc_nixpkgs(
+    name = "rules_haskell",
     attribute_path = "ghc",
     repository = "@nixpkgs",
     version = "9.0.2",
     exec_constraints = ["@//backend:regular_linking"],
     target_constraints = ["@//backend:regular_linking"],
+)
+
+haskell_register_ghc_nixpkgs(
+    name = "rules_haskell_static",
+    attribute_path = "",
+    # TODO[AH] Upstream and expose through a Nix cache.
+    nix_file_content = """\
+with import <nixpkgs> { config = {}; overlays = []; };
+haskell.compiler.ghc902.override {
+  enableRelocatedStaticLibs = true;
+  enableShared = false;
+}
+""",
+    repository = "@static-nixpkgs",
+    nixopts = static_nixopts,
+    version = "9.0.2",
+    static_runtime = True,
+    fully_static_link = True,
+    exec_constraints = ["@//backend:fully_static_linking"],
+    target_constraints = ["@//backend:fully_static_linking"],
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
