@@ -2,7 +2,15 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(
     name = "sqlite.dev",
-    srcs = glob(["lib/*.so*"]),
+    srcs = select({
+        "@//backend:regular_linking": glob(["lib/*.so*"]),
+        "@//backend:fully_static_linking": [
+            # No need to link anything for sqlite when building a fully static executable.
+            # The direct-sqlite Haskell library already links against it so we can just
+            # assume the appropriate symbols will already be available in the executable
+            # and let the linker sort it out.
+        ],
+    }),
     hdrs = glob(["include/*.h"]),
     strip_include_prefix = "include",
     visibility = ["//visibility:public"],
