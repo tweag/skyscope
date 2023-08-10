@@ -4,9 +4,9 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
     name = "io_tweag_rules_nixpkgs",
-    sha256 = "9e3898a33c5f21f634aa9e2d45620e7c4b6d54d16d473571a891193bbd4725ca",
-    strip_prefix = "rules_nixpkgs-0c1f8f5470c7f292b7620762e224f53d837929d3",
-    urls = ["https://github.com/tweag/rules_nixpkgs/archive/0c1f8f5470c7f292b7620762e224f53d837929d3.tar.gz"],
+    sha256 = "1f3d86577eb1b85881f60c9eb1eb420c64d2ec8b9c951dbd66394db20cb5ddb1",
+    strip_prefix = "rules_nixpkgs-d28e07001f2c2386162cb51964f02f6c9b67628a",
+    urls = ["https://github.com/tweag/rules_nixpkgs/archive/d28e07001f2c2386162cb51964f02f6c9b67628a.tar.gz"],
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:repositories.bzl", "rules_nixpkgs_dependencies")
@@ -78,16 +78,6 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
 nixpkgs_cc_configure(repository = "@nixpkgs")
 
-# TODO[AH] Replace this by global Nix configuration for appropriate Nix cache.
-static_nixopts = ["--builders", "@/etc/nix/machines", "-j0"]
-
-nixpkgs_cc_configure(
-    repository = "@static-nixpkgs",
-    nixopts = static_nixopts,
-    exec_constraints = ["//backend:static_executable"],
-    target_constraints = ["//backend:static_executable"],
-)
-
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
 
 nixpkgs_python_configure(repository = "@nixpkgs")
@@ -100,38 +90,12 @@ haskell_register_ghc_nixpkgs(
     version = "9.0.2",
 )
 
-haskell_register_ghc_nixpkgs(
-    attribute_path = "",
-    # TODO[AH] Upstream and expose through a Nix cache.
-    nix_file_content = """\
-with import <nixpkgs> { config = {}; overlays = []; };
-haskell.compiler.ghc902.override {
-  enableRelocatedStaticLibs = true;
-  enableShared = false;
-}
-""",
-    repository = "@static-nixpkgs",
-    nixopts = static_nixopts,
-    version = "9.0.2",
-    static_runtime = True,
-    fully_static_link = True,
-    exec_constraints = ["//backend:static_executable"],
-    target_constraints = ["//backend:static_executable"],
-)
-
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
 
 nixpkgs_package(
     name = "nixpkgs_zlib",
     attribute_path = "zlib",
     repository = "@nixpkgs",
-)
-
-nixpkgs_package(
-    name = "nixpkgs_zlib.static",
-    attribute_path = "zlib.static",
-    repository = "@static-nixpkgs",
-    nixopts = static_nixopts,
 )
 
 nixpkgs_package(
@@ -158,12 +122,6 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_local_repository")
 nixpkgs_local_repository(
     name = "nixpkgs",
     nix_flake_lock_file = "//:flake.lock",
-)
-
-nixpkgs_local_repository(
-    name = "static-nixpkgs",
-    nix_file = "//:static-nixpkgs.nix",
-    nix_file_deps = ["//:flake.lock"],
 )
 
 nixpkgs_package(
