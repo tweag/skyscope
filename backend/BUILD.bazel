@@ -118,5 +118,8 @@ cc_library(
     srcs = [":src/import.cpp"],
     copts = copts,
     linkstatic = True,
-    deps = ["@sqlite.dev"],
+    deps = select({
+        "@//backend:regular_linking": ["@sqlite.dev"],
+        "@//backend:fully_static_linking": ["@sqlite.dev.static//:sqlite.dev"],
+    }),
 )

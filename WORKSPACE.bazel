@@ -164,6 +164,19 @@ nixpkgs_package(
     repository = "@nixpkgs",
 )
 
+nixpkgs_package(
+    name = "sqlite.dev.static",
+    build_file = "//backend:sqlite.BUILD.bazel",
+    nix_file_content = """
+        let pkgs = import <nixpkgs> { };
+        in pkgs.buildEnv {
+          name = "sqlite";
+          paths = [ pkgs.sqlite.dev pkgs.sqlite.out ];
+        }
+    """,
+    repository = "@static-nixpkgs",
+)
+
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_local_repository")
 
 nixpkgs_local_repository(
