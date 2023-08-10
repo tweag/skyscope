@@ -76,7 +76,11 @@ stack_snapshot(
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
-nixpkgs_cc_configure(repository = "@nixpkgs")
+nixpkgs_cc_configure(
+    repository = "@nixpkgs",
+    exec_constraints = ["@//backend:regular_linking"],
+    target_constraints = ["@//backend:regular_linking"],
+)
 
 # TODO[AH] Replace this by global Nix configuration for appropriate Nix cache.
 static_nixopts = ["--builders", "@/etc/nix/machines", "-j0"]
@@ -91,6 +95,8 @@ haskell_register_ghc_nixpkgs(
     attribute_path = "ghc",
     repository = "@nixpkgs",
     version = "9.0.2",
+    exec_constraints = ["@//backend:regular_linking"],
+    target_constraints = ["@//backend:regular_linking"],
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")

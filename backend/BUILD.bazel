@@ -2,17 +2,33 @@ load("@rules_haskell//haskell:defs.bzl", "haskell_binary", "haskell_toolchain_li
 
 constraint_setting(
     name = "executable_linking",
+    visibility = ["//visibility:public"],
 )
 
 constraint_value(
-    name = "fully_static",
+    name = "fully_static_linking",
     constraint_setting = ":executable_linking",
+    visibility = ["//visibility:public"],
 )
 
 platform(
     name = "static_executable",
-    constraint_values = [":fully_static"],
+    constraint_values = [":fully_static_linking"],
     parents = ["@io_tweag_rules_nixpkgs//nixpkgs/platforms:host"],
+    visibility = ["//visibility:public"],
+)
+
+constraint_value(
+    name = "regular_linking",
+    constraint_setting = ":executable_linking",
+    visibility = ["//visibility:public"],
+)
+
+platform(
+    name = "regular_executable",
+    constraint_values = [":regular_linking"],
+    parents = ["@io_tweag_rules_nixpkgs//nixpkgs/platforms:host"],
+    visibility = ["//visibility:public"],
 )
 
 haskell_toolchain_library(name = "base")
