@@ -76,12 +76,16 @@ stack_snapshot(
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_git_repository")
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
+nixpkgs_cc_configure(repository = "@nixpkgs")
+
 # TODO[AH] Replace this by global Nix configuration for appropriate Nix cache.
 static_nixopts = ["--builders", "@/etc/nix/machines", "-j0"]
 
 nixpkgs_cc_configure(
     repository = "@static-nixpkgs",
     nixopts = static_nixopts,
+    exec_constraints = ["//backend:static_executable"],
+    target_constraints = ["//backend:static_executable"],
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
@@ -89,6 +93,12 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_python_configure")
 nixpkgs_python_configure(repository = "@nixpkgs")
 
 load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
+
+haskell_register_ghc_nixpkgs(
+    attribute_path = "ghc",
+    repository = "@nixpkgs",
+    version = "9.0.2",
+)
 
 haskell_register_ghc_nixpkgs(
     attribute_path = "",
@@ -105,12 +115,20 @@ haskell.compiler.ghc902.override {
     version = "9.0.2",
     static_runtime = True,
     fully_static_link = True,
+    exec_constraints = ["//backend:static_executable"],
+    target_constraints = ["//backend:static_executable"],
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
 
 nixpkgs_package(
     name = "nixpkgs_zlib",
+    attribute_path = "zlib",
+    repository = "@nixpkgs",
+)
+
+nixpkgs_package(
+    name = "nixpkgs_zlib.static",
     attribute_path = "zlib.static",
     repository = "@static-nixpkgs",
     nixopts = static_nixopts,

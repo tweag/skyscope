@@ -1,5 +1,20 @@
 load("@rules_haskell//haskell:defs.bzl", "haskell_binary", "haskell_toolchain_library")
 
+constraint_setting(
+    name = "executable_linking",
+)
+
+constraint_value(
+    name = "fully_static",
+    constraint_setting = ":executable_linking",
+)
+
+platform(
+    name = "static_executable",
+    constraint_values = [":fully_static"],
+    parents = ["@io_tweag_rules_nixpkgs//nixpkgs/platforms:host"],
+)
+
 haskell_toolchain_library(name = "base")
 
 haskell_binary(
@@ -63,7 +78,7 @@ haskell_binary(
         "@stackage//:warp",
         "@stackage//:zlib",
     ],
-    features = ["fully_static_link"],
+    #features = ["fully_static_link"],
 )
 
 copts = [
