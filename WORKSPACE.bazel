@@ -99,6 +99,13 @@ nixpkgs_package(
 )
 
 nixpkgs_package(
+    name = "nixpkgs_zlib.static",
+    attribute_path = "zlib.static",
+    repository = "@static-nixpkgs",
+    nixopts = static_nixopts,
+)
+
+nixpkgs_package(
     name = "zlib.dev",
     build_file = "//backend:zlib.BUILD.bazel",
     repository = "@nixpkgs",
