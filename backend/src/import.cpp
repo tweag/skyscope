@@ -12,8 +12,6 @@
 #include <vector>
 #include <charconv>
 
-#if 0
-
 #include "sqlite3.h"
 
 using namespace std;
@@ -292,11 +290,7 @@ void bindInsertEdgeStmt(sqlite3_stmt* stmt, const Edge* begin, const Edge* end) 
     }
 }
 
-#endif
-
 extern "C" bool c_importSkyframe(const char* dbPath) {
-
-#if 0
     cerr << "c_importSkyframe: " << dbPath << endl;
     auto nodeCount = 0, edgeCount = 0;
     auto updateProgress = [&](bool finished = false) {
@@ -376,8 +370,4 @@ extern "C" bool c_importSkyframe(const char* dbPath) {
     updateProgress("0");
     cerr << "\n";
     return true;
-
-#endif
-
-    return false;
 }
