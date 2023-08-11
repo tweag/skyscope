@@ -57,10 +57,11 @@ importSkyframe :: FilePath -> IO ()
 importSkyframe path =
   withDatabase "importing skyframe" path $
     const $ -- withDatabase creates the schema
-      guard =<< withCString path c_importSkyframe
+      --guard =<< withCString path c_importSkyframe
+      undefined
 
-foreign import ccall safe "import.cpp"
-  c_importSkyframe :: CString -> IO Bool
+--foreign import ccall safe "import.cpp"
+--  c_importSkyframe :: CString -> IO Bool
 
 importTargets :: FilePath -> IO ()
 importTargets path = withDatabase "importing targets" path $ \database -> do

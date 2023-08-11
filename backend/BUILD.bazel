@@ -64,7 +64,7 @@ haskell_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":base",
-        ":import",
+        #":import",
         ":path",
         "@stackage//:HList",
         "@stackage//:aeson",
@@ -113,13 +113,13 @@ cc_library(
     copts = copts,
 )
 
-cc_library(
-    name = "import",
-    srcs = [":src/import.cpp"],
-    copts = copts,
-    linkstatic = True,
-    #deps = select({
-    #    "@//backend:regular_linking": ["@sqlite.dev"],
-    #    "@//backend:fully_static_linking": ["@sqlite.dev.static//:sqlite.dev"],
-    #}),
-)
+#cc_library(
+#    name = "import",
+#    srcs = [":src/import.cpp"],
+#    copts = copts,
+#    linkstatic = True,
+#    #deps = select({
+#    #    "@//backend:regular_linking": ["@sqlite.dev"],
+#    #    "@//backend:fully_static_linking": ["@sqlite.dev.static//:sqlite.dev"],
+#    #}),
+#)
