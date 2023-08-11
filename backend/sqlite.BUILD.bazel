@@ -2,8 +2,10 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(
     name = "sqlite.dev",
-    #srcs = glob(["lib/*.so*"]),
-    srcs = [],
+    srcs = select({
+        "@//backend:regular_linking": glob(["lib/*.so*"]),
+        "@//backend:fully_static_linking": [],
+    }),
     hdrs = glob(["include/*.h"]),
     strip_include_prefix = "include",
     visibility = ["//visibility:public"],
