@@ -10,7 +10,7 @@ module Import where
 import Common
 import Control.Arrow ((&&&))
 import Control.Category ((>>>))
-import Control.Monad (guard)
+--import Control.Monad (guard)
 import Data.Bifunctor (first)
 import Data.FileEmbed (embedFile)
 import Data.Foldable (asum)
@@ -25,7 +25,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import qualified Data.Text.IO as Text
 import Database.SQLite3 (SQLData (..))
-import Foreign.C.String (CString, withCString)
+--import Foreign.C.String (CString, withCString)
 import Sqlite (Database)
 import qualified Sqlite
 import Prelude
