@@ -88,7 +88,7 @@ nixpkgs_cc_configure(
 static_nixopts = []
 
 nixpkgs_cc_configure(
-    #name = "local_config_cc_static",
+    name = "local_config_cc_static",
     repository = "@static-nixpkgs",
     nixopts = static_nixopts,
     exec_constraints = ["@//backend:fully_static_linking"],
