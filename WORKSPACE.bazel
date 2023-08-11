@@ -88,7 +88,7 @@ nixpkgs_cc_configure(
 static_nixopts = []
 
 nixpkgs_cc_configure(
-    name = "local_config_cc_static",
+    #name = "local_config_cc_static",
     repository = "@static-nixpkgs",
     nixopts = static_nixopts,
     exec_constraints = ["@//backend:fully_static_linking"],
@@ -111,7 +111,7 @@ haskell_register_ghc_nixpkgs(
 )
 
 haskell_register_ghc_nixpkgs(
-    name = "rules_haskell_static",
+    #name = "rules_haskell_static",
     attribute_path = "",
     # TODO[AH] Upstream and expose through a Nix cache.
     nix_file_content = """\
