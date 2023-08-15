@@ -52,6 +52,10 @@ haskell_binary(
         "//frontend:src/theme.css",
         "//backend:src/schema.sql",
     ],
+    features = select({
+        "@//backend:regular_linking": [],
+        "@//backend:fully_static_linking": ["fully_static_link"],
+    }),
     ghcopts = [
         "-O2",
         "-Wall",
@@ -94,10 +98,6 @@ haskell_binary(
         "@stackage//:warp",
         "@stackage//:zlib",
     ],
-    features = select({
-        "@//backend:regular_linking": [],
-        "@//backend:fully_static_linking": ["fully_static_link"],
-    }),
 )
 
 copts = [
