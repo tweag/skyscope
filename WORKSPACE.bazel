@@ -78,19 +78,19 @@ load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_cc_configure")
 
 nixpkgs_cc_configure(
     name = "local_config_cc_regular",
-    repository = "@nixpkgs",
     exec_constraints = ["@//backend:regular_linking"],
+    repository = "@nixpkgs",
     target_constraints = ["@//backend:regular_linking"],
 )
 
 # TODO[AH] Replace this by global Nix configuration for appropriate Nix cache.
-static_nixopts = [] #["--builders", "@/etc/nix/machines", "-j0"]
+static_nixopts = []  #["--builders", "@/etc/nix/machines", "-j0"]
 
 nixpkgs_cc_configure(
     name = "local_config_cc_static",
-    repository = "@static-nixpkgs",
-    nixopts = static_nixopts,
     exec_constraints = ["@//backend:fully_static_linking"],
+    nixopts = static_nixopts,
+    repository = "@static-nixpkgs",
     target_constraints = ["@//backend:fully_static_linking"],
 )
 
@@ -103,15 +103,17 @@ load("@rules_haskell//haskell:nixpkgs.bzl", "haskell_register_ghc_nixpkgs")
 haskell_register_ghc_nixpkgs(
     name = "rules_haskell_regular",
     attribute_path = "ghc",
-    repository = "@nixpkgs",
-    version = "9.0.2",
     exec_constraints = ["@//backend:regular_linking"],
+    repository = "@nixpkgs",
     target_constraints = ["@//backend:regular_linking"],
+    version = "9.0.2",
 )
 
 haskell_register_ghc_nixpkgs(
     name = "rules_haskell_static",
     attribute_path = "",
+    exec_constraints = ["@//backend:fully_static_linking"],
+    fully_static_link = True,
     # TODO[AH] Upstream and expose through a Nix cache.
     nix_file_content = """\
 with import <nixpkgs> { config = {}; overlays = []; };
@@ -120,13 +122,11 @@ haskell.compiler.ghc902.override {
   enableShared = false;
 }
 """,
-    repository = "@static-nixpkgs",
     nixopts = static_nixopts,
-    version = "9.0.2",
+    repository = "@static-nixpkgs",
     static_runtime = True,
-    fully_static_link = True,
-    exec_constraints = ["@//backend:fully_static_linking"],
     target_constraints = ["@//backend:fully_static_linking"],
+    version = "9.0.2",
 )
 
 load("@io_tweag_rules_nixpkgs//nixpkgs:nixpkgs.bzl", "nixpkgs_package")
@@ -140,8 +140,8 @@ nixpkgs_package(
 nixpkgs_package(
     name = "nixpkgs_zlib.static",
     attribute_path = "zlib.static",
-    repository = "@static-nixpkgs",
     nixopts = static_nixopts,
+    repository = "@static-nixpkgs",
 )
 
 nixpkgs_package(
