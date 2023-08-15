@@ -10,7 +10,7 @@
 
 module Server where
 
-import Common (getSkyscopeEnv)
+import Common (getDataDirectory, getSkyscopeEnv)
 import Control.Concurrent.STM (atomically)
 import Control.Concurrent.STM.TVar (modifyTVar, newTVar, newTVarIO, readTVar)
 import Control.Exception (handle, try, tryJust)
@@ -50,7 +50,7 @@ import qualified Query
 import qualified Render
 import Sqlite (Database)
 import qualified Sqlite
-import System.Directory (createDirectoryIfMissing, removeFile)
+import System.Directory (removeFile)
 import System.FilePath.Find (filePath, find, (~~?))
 import System.IO (BufferMode (..), IOMode (..), hSetBuffering, hSetEncoding, stderr, stdout, utf8, withFile)
 import System.IO.Error (isDoesNotExistError)
@@ -291,12 +291,6 @@ server port = withImportDb $ \importDatabase -> do
               "  </body>",
               "</html>"
             ]
-
-getDataDirectory :: IO FilePath
-getDataDirectory = do
-  dir <- getSkyscopeEnv "DATA" <&> fromMaybe (error "data dir")
-  createDirectoryIfMissing True dir
-  pure dir
 
 data Import = Import
   { importId :: UUID,

@@ -28,6 +28,7 @@ import Database.SQLite3 (SQLData (..))
 import Foreign.C.String (CString, withCString)
 import Sqlite (Database)
 import qualified Sqlite
+import System.IO (Handle)
 import Prelude
 
 withDatabase :: String -> FilePath -> (Database -> IO a) -> IO a
@@ -62,8 +63,8 @@ importSkyframe path =
 foreign import ccall safe "import.cpp"
   c_importSkyframe :: CString -> IO Bool
 
-importTargets :: FilePath -> IO ()
-importTargets path = withDatabase "importing targets" path $ \database -> do
+importTargets :: Handle -> FilePath -> IO ()
+importTargets source path = withDatabase "importing targets" path $ \database -> do
   workspace <- maybe "" Text.pack <$> getSkyscopeEnv "WORKSPACE"
   external <- maybe "" Text.pack <$> getSkyscopeEnv "OUTPUT_BASE" <&> (<> "/external/")
   let parseRepository text = case Text.stripPrefix ("# " <> workspace) text of
@@ -78,11 +79,11 @@ importTargets path = withDatabase "importing targets" path $ \database -> do
       parseLabel text =
         parsePackage text & \(package, text) ->
           ((package <> ":") <>) $ fst $ findLine "  name = \"" text & Text.break (== '"')
-  targets <- map (parseLabel &&& id) <$> getParagraphs
+  targets <- map (parseLabel &&& id) <$> getParagraphs source
   addContext database targets
 
-importActions :: FilePath -> IO ()
-importActions path = withDatabase "importing actions" path $ \database -> do
+importActions :: Handle -> FilePath -> IO ()
+importActions source path = withDatabase "importing actions" path $ \database -> do
   let parseAction paragraph = (findLine "  Target: " paragraph, paragraph)
       indexedActions group = (0 :| [1 ..]) `NonEmpty.zip` (snd <$> group)
       filterActions = filter $ \paragraph ->
@@ -97,7 +98,7 @@ importActions path = withDatabase "importing actions" path $ \database -> do
       . sortOn fst
       . map parseAction
       . filterActions
-      <$> getParagraphs
+      <$> getParagraphs source
   addContext database $
     concat $
       groups <&> \group@((label, _) :| _) ->
@@ -106,8 +107,8 @@ importActions path = withDatabase "importing actions" path $ \database -> do
             let contextKey = label <> " " <> Text.pack (show @Integer index)
              in (contextKey, contextData)
 
-getParagraphs :: IO [Text]
-getParagraphs = filter (Text.any (/= '\n')) . Text.splitOn "\n\n" <$> Text.getContents
+getParagraphs :: Handle -> IO [Text]
+getParagraphs source = filter (Text.any (/= '\n')) . Text.splitOn "\n\n" <$> Text.hGetContents source
 
 findLine :: Text -> Text -> Text
 findLine prefix paragraph =

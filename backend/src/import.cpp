@@ -367,7 +367,7 @@ extern "C" bool c_importSkyframe(const char* dbPath) {
     }
 
     // Import complete.
-    updateProgress("0");
-    cerr << "\n";
+    updateProgress(true);
+    cerr << flush;
     return true;
 }
