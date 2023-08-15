@@ -26,6 +26,8 @@ rules_haskell_dependencies()
 
 load("@rules_haskell//haskell:cabal.bzl", "stack_snapshot")
 
+# Run this following after adding new packages:
+#   bazel run @stackage-unpinned//:pin
 stack_snapshot(
     name = "stackage",
     components = {
@@ -52,7 +54,9 @@ stack_snapshot(
         "directory",
         "file-embed",
         "filemanip",
+        "filepath",
         "hdaemonize-0.5.6",
+        "http-client",
         "http-types",
         "mtl",
         "process",
@@ -60,6 +64,7 @@ stack_snapshot(
         "scotty",
         "stm",
         "template-haskell",
+        "temporary-1.3",
         "text",
         "time",
         "transformers",

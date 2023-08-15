@@ -10,6 +10,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Time.Clock as Clock
 import Debug.Trace (trace)
+import System.Directory (createDirectoryIfMissing)
 import System.Environment (lookupEnv)
 
 type Memoize e a = ReaderT e IO a
@@ -71,3 +72,15 @@ traceValue label x = trace (label <> " = " <> show x) x
 
 getSkyscopeEnv :: String -> IO (Maybe String)
 getSkyscopeEnv name = lookupEnv $ "SKYSCOPE_" <> name
+
+getDataDirectory :: IO FilePath
+getDataDirectory = do
+  path <-
+    getSkyscopeEnv "DATA" >>= \case
+      Just dataDir -> pure dataDir
+      Nothing ->
+        lookupEnv "HOME" >>= \case
+          Just homeDir -> pure $ homeDir <> "/.skyscope"
+          Nothing -> error "HOME environment variable unset"
+  createDirectoryIfMissing True path
+  pure path
