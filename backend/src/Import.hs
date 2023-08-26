@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
@@ -11,19 +12,29 @@ import Common
 import Control.Arrow ((&&&))
 import Control.Category ((>>>))
 import Control.Monad (guard)
+import Control.Monad.State (evalState, gets, modify)
 import Data.Bifunctor (first)
 import Data.FileEmbed (embedFile)
 import Data.Foldable (asum)
 import Data.Function ((&))
 import Data.Functor ((<&>))
+import Data.GraphViz (DotGraph)
+import Data.GraphViz.Attributes.Complete (Attribute (..), Label (..))
+import qualified Data.GraphViz.Parsing as GraphViz
+import Data.GraphViz.Types (DotEdge (..))
+import qualified Data.GraphViz.Types as GraphViz
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Maybe (isJust)
+import qualified Data.Map as Map
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import qualified Data.Text.IO as Text
+import qualified Data.Text.Lazy as LazyText
+import qualified Data.Text.Lazy.IO as LazyText
+import Data.Traversable (for)
 import Database.SQLite3 (SQLData (..))
 import Foreign.C.String (CString, withCString)
 import Sqlite (Database)
@@ -118,3 +129,31 @@ findLine prefix paragraph =
           Nothing -> find lines
           Just text -> text
    in find $ Text.lines paragraph
+
+importGraphviz :: Handle -> FilePath -> IO ()
+importGraphviz source path = withDatabase "importing graphviz" path $ \database -> do
+  dotGraph <- GraphViz.parseIt' @(DotGraph Text) <$> LazyText.hGetContents source
+  let (nodes, edges) = (GraphViz.nodeInformation False &&& GraphViz.graphEdges) dotGraph
+  let assignIndex node = gets (,node) <* modify (+ 1)
+      indexedNodes = evalState (for nodes assignIndex) 1
+      coerceMaybe = fromMaybe $ error "parser produced an edge with an unknown node"
+      indexedEdges = coerceMaybe $
+        for edges $ \DotEdge {..} -> do
+          sourceIndex <- fst <$> Map.lookup fromNode indexedNodes
+          targetIndex <- fst <$> Map.lookup toNode indexedNodes
+          pure (0, sourceIndex, targetIndex)
+      getLabel nodeID attrs = case attrs of
+        Label (StrLabel label) : _ -> LazyText.toStrict label
+        _ : attrs' -> getLabel nodeID attrs'
+        [] -> nodeID
+  Sqlite.batchInsert database "node" ["idx", "hash", "data", "type"] $
+    Map.assocs indexedNodes <&> \(nodeID, (nodeIdx, (_, attributes))) ->
+      let label = getLabel nodeID attributes
+          (nodeData, nodeType) = case Text.splitOn "\\n" label of
+            nodeType : rest@(_ : _) -> (Text.intercalate "\\n" rest, nodeType)
+            [nodeData] -> (nodeData, nodeID)
+            _ -> error "unexpected graphviz node label"
+       in SQLInteger nodeIdx : (SQLText <$> [nodeID, nodeData, nodeType])
+  Sqlite.batchInsert database "edge" ["group_num", "source", "target"] $
+    indexedEdges <&> \(g, s, t) -> SQLInteger <$> [g, s, t]
+  putStrLn $ path <> "\n    imported " <> show (Map.size nodes) <> " nodes and " <> show (length edges) <> " edges"

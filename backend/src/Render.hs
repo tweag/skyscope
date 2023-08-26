@@ -157,7 +157,7 @@ renderGraph database dbPath nodeStates = do
     graphvizAttributes :: [(Text, Text)] -> Text
     graphvizAttributes attrs =
       let f (name, value) = name <> "=\"" <> value <> "\""
-       in " [ " <> Text.intercalate "; " (f <$> attrs) <> " ];"
+       in " [ " <> Text.intercalate " " (f <$> attrs) <> " ];"
 
 data PathLink = PathLink
   { linkHidden :: Int,
