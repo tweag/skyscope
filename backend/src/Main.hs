@@ -20,6 +20,7 @@ import qualified Server
 import System.Directory (createDirectoryIfMissing)
 import System.Environment (getArgs, setEnv)
 import System.FilePath.Posix (takeBaseName)
+import System.IO (stdin)
 import System.IO.Error (isDoesNotExistError)
 import System.IO.Temp (emptyTempFile)
 import System.Posix.Daemonize (daemonize)
@@ -36,14 +37,24 @@ main = do
   getArgs >>= \case
     ["server"] -> pure ()
     "import" : args -> importWorkspace args
-    _ -> error "usage: skyscope server|import [--query=EXPR|--no-query] [--aquery=EXPR|--no-query]"
+    "import-graphviz" : args -> importGraphviz args
+    _ -> usageError
 
-importWorkspace :: [String] -> IO ()
-importWorkspace args = do
-  workspace <- getBazelWorkspace
-  setEnv "SKYSCOPE_WORKSPACE" workspace
-  setEnv "SKYSCOPE_OUTPUT_BASE" =<< getBazelOutputBase
-  let (queryExpr, aqueryExpr) = parseImportArgs args
+usageError :: a
+usageError =
+  error $
+    "usage: skyscope server|import [--query=EXPR|--no-query] [--aquery=EXPR|--no-query]\n"
+      <> "       skyscope import-graphviz [TAG]"
+
+importNew :: Maybe String -> (FilePath -> IO ()) -> IO ()
+importNew workspace populateDatabase = do
+  workspace <- case workspace of
+    Just workspace -> pure workspace
+    Nothing -> do
+      workspace <- getBazelWorkspace
+      setEnv "SKYSCOPE_WORKSPACE" workspace
+      setEnv "SKYSCOPE_OUTPUT_BASE" =<< getBazelOutputBase
+      pure workspace
 
   -- Create a new sqlite database to import into.
   let dbTemplate = takeBaseName workspace <> ".sqlite"
@@ -51,6 +62,21 @@ importWorkspace args = do
   createDirectoryIfMissing True importsDir
   dbPath <- emptyTempFile importsDir dbTemplate
 
+  populateDatabase dbPath
+
+  putStrLn "import complete, notifying server"
+  notifyServer workspace dbPath
+
+importGraphviz :: [String] -> IO ()
+importGraphviz args = importNew tag $ Import.importGraphviz stdin
+  where
+    tag = Just $ case args of
+      [] -> "graphviz-import"
+      [tag] -> tag
+      _ -> usageError
+
+importWorkspace :: [String] -> IO ()
+importWorkspace args = importNew Nothing $ \dbPath -> do
   let withBazel args f = do
         logCommand "bazel" args
         withCreateProcess
@@ -61,10 +87,10 @@ importWorkspace args = do
             }
           $ \_ (Just bazelStdout) _ _ -> f bazelStdout dbPath
 
+  let (queryExpr, aqueryExpr) = parseImportArgs args
   when (aqueryExpr /= "") $ do
     putStrLn "importing extra context for actions (pass --no-aquery to skip this step)"
     (withBazel ["aquery", aqueryExpr] Import.importActions)
-
   when (queryExpr /= "") $ do
     putStrLn "importing extra context for targets (pass --no-query to skip this step)"
     (withBazel ["query", queryExpr, "--output", "build"] Import.importTargets)
@@ -81,11 +107,7 @@ importWorkspace args = do
           "detailed" <$ setEnv "SKYSCOPE_LEGACY_BAZEL" "1"
         | otherwise -> pure "deps"
       Nothing -> error "unable to determine bazel version"
-
   withStdinFrom "bazel" ["dump", "--skyframe=" <> dumpSkyframeOpt] (Import.importSkyframe dbPath)
-
-  putStrLn "import complete, notifying server"
-  notifyServer workspace dbPath
 
 parseImportArgs :: [String] -> (String, String)
 parseImportArgs = \case
@@ -169,8 +191,8 @@ logCommand command args = putStrLn $ "\x1b[1;37m" <> command <> " " <> unwords a
 getBazelOutputBase :: IO FilePath
 getBazelOutputBase =
   lines <$> readProcess "bazel" ["info", "output_base"] "" <&> \case
-    workspace : _ -> workspace
-    _ -> error "failed to get workspace"
+    outputBase : _ -> outputBase
+    _ -> error "failed to get output_base"
 
 getBazelWorkspace :: IO FilePath
 getBazelWorkspace =
@@ -186,14 +208,3 @@ getBazelVersion = do
           Just version -> pure version
           Nothing -> find remaining
   lines <$> readProcess "bazel" ["version"] "" <&> find
-
-{-
-  getArgs >>= \case
-    ["import-skyframe", path] -> Import.importSkyframe path
-    ["import-targets", path] -> Import.importTargets path
-    ["import-actions", path] -> Import.importActions path
-    ["server", port] -> case readMaybe port of
-      Nothing -> error $ "unable to parse port: " <> port
-      Just port -> daemonize $ Server.server port
-    _ -> putStrLn "invalid args" *> exitFailure
--}

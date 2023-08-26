@@ -82,6 +82,7 @@ haskell_binary(
         "@stackage//:file-embed",
         "@stackage//:filemanip",
         "@stackage//:filepath",
+        "@stackage//:graphviz",
         "@stackage//:hdaemonize",
         "@stackage//:http-client",
         "@stackage//:http-types",

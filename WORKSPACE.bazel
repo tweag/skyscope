@@ -55,6 +55,7 @@ stack_snapshot(
         "file-embed",
         "filemanip",
         "filepath",
+        "graphviz-2999.20.1.0",
         "hdaemonize-0.5.6",
         "http-client",
         "http-types",
