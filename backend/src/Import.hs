@@ -152,7 +152,7 @@ importGraphviz source path = withDatabase "importing graphviz" path $ \database 
       let label = getLabel nodeID attributes
           (nodeData, nodeType) = case Text.splitOn "\\n" label of
             nodeType : rest@(_ : _) ->
-              let allowed c = isAlphaNum c || c == "_"
+              let allowed c = isAlphaNum c || c == '_'
                   nodeType' = Text.filter allowed nodeType
                   nodeData' = Text.intercalate " " $ nodeType' : rest
                in (nodeData', nodeType')
