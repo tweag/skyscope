@@ -44,7 +44,7 @@ usageError :: a
 usageError =
   error $
     "usage: skyscope server|import [--query=EXPR|--no-query] [--aquery=EXPR|--no-query]\n"
-      <> "       skyscope import-graphviz [TAG]"
+      <> "                 skyscope import-graphviz [TAG]"
 
 importNew :: Maybe String -> (FilePath -> IO ()) -> IO ()
 importNew workspace populateDatabase = do

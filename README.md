@@ -11,9 +11,8 @@ A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/refere
 
 <!-- BEGIN-TOC -->
 - [Getting Skyscope](#getting-skyscope)
-  - [Add it to your `WORKSPACE` file](#add-it-to-your-workspace-file)
-  - [Manually download and install a release](#manually-download-and-install-a-release)
-  - [Build and run it from source](#build-and-run-it-from-source-requires-nix)
+  - [Option 1: Download a single binary (Linux only)](#option-1-download-a-single-binary-linux-only)
+  - [Option 2: Build and run it from source (requires Nix)](#option-2-build-and-run-it-from-source-requires-nix)
 - [Using Skyscope](#using-skyscope)
   - [Importing a graph](#importing-a-graph)
   - [Searching for nodes](#searching-for-nodes)
@@ -33,8 +32,8 @@ A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/refere
 
 ## Getting Skyscope
 
-As a prerequisite you will need the `graphviz`, `curl` and `jq` packages
-installed and `PATH` set so they can be found. Use your preferred package
+As a prerequisite you will need the `graphviz` package installed and
+`PATH` set so that `dot` can be found. Use your preferred package
 manager to do this, e.g.  for Ubuntu:
 
 ```bash
@@ -45,44 +44,20 @@ Or for MacOS:
 brew install graphviz
 ```
 
-There are a few different ways to install and run Skyscope itself. Pick
-whichever suits best.
+### Option 1: Download a single binary (Linux only)
 
-### Add it to your `WORKSPACE` file
-
-This method is recommended if you want to quickly try Skyscope with minimal
-hassle. Simply add the following to your `WORKSPACE` file:
-
-```python
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-http_archive(
-    name = "skyscope",
-    sha256 = "5544313ec77adbc96856c4cdfb3dfc6b5409e05790860ae19c7d321fb585490b",
-    urls = ["https://github.com/tweag/skyscope/releases/download/v0.2.7/skyscope.zip"]
-)
-load("@skyscope//:repository.bzl", "configure_skyscope")
-configure_skyscope()
-```
-
-You will then be able to invoke Skyscope in that workspace with `bazel run`
-(see [Using Skyscope](#using-skyscope) for details).
-
-### Manually download and install a release
-
-This method is a little more complicated than the previous one, but it has the
-advantage that Skyscope can be run in any workspace without needing to change
-its `WORKSPACE` file.
+If you're running Linux, you can download Skyscope as a prebuilt binary:
 
 1. Go to the [releases page](https://github.com/tweag/skyscope/releases) and
 pick the version you want. The latest is
-[v0.2.7](https://github.com/tweag/skyscope/releases/v0.2.7).
+[v0.3.0](https://github.com/tweag/skyscope/releases/v0.3.0).
 
-2. Download a zip archive for your Operating System (currently supported are
-Linux and MacOS).
+2. Download a single statically linked binary.
 
-3. Extract it somewhere; e.g.
+3. Put it somewhere; e.g.
 ```bash
-unzip ~/Downloads/skyscope-linux.zip -d ~/.local/
+mkdir -p ~/.local/skyscope/bin
+mv ~/Downloads/skyscope ~/.local/skyscope/bin/
 ```
 
 4. Update your `PATH` variable appropriately; e.g. append this to `~/.bashrc`:
@@ -90,22 +65,21 @@ unzip ~/Downloads/skyscope-linux.zip -d ~/.local/
 export PATH="$HOME/.local/skyscope/bin:$PATH"
 ```
 
-### Build and run it from source (requires [Nix](https://nixos.org/download.html))
+### Option 2: Build and run it from source (requires [Nix](https://nixos.org/download.html))
 
-Finally, the git repository contains a [wrapper
-script](https://github.com/benradf/skyscope/blob/readme/bin/skyscope) that
-invokes Bazel to build and run Skyscope from source. This is useful when making
-changes to the Skyscope source code. Building takes a little while, on the first run.
+If you're running MacOS you'll need to build Skyscope yourself:
 
 1. Clone the repository:
 ```bash
 git clone https://github.com/tweag/skyscope.git
 ```
 
-2. Add the repository's `bin` directory to your `PATH` variable; e.g. in `~/.bashrc`:
+2. Build the backend binary:
 ```bash
-export PATH="$HOME/git/skyscope/bin:$PATH"
+nix develop --command bazel build //backend:skyscope
 ```
+
+After the build completes the binary can be found at `bazel-bin/backend/skyscope`.
 
 ## Using Skyscope
 
