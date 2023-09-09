@@ -52,15 +52,12 @@ If you're running Linux, you can download Skyscope as a prebuilt binary:
 pick the version you want. The latest is
 [v0.3.0](https://github.com/tweag/skyscope/releases/v0.3.0).
 
-2. Download a single statically linked binary.
-
-3. Put it somewhere; e.g.
+2. Download the zip archive and unpack it somewhere; e.g.
 ```bash
-mkdir -p ~/.local/skyscope/bin
-mv ~/Downloads/skyscope ~/.local/skyscope/bin/
+unzip ~/Downloads/skyscope.zip -d ~/.local/
 ```
 
-4. Update your `PATH` variable appropriately; e.g. append this to `~/.bashrc`:
+3. Update your `PATH` variable appropriately; e.g. append this to `~/.bashrc`:
 ```bash
 export PATH="$HOME/.local/skyscope/bin:$PATH"
 ```
