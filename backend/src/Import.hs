@@ -14,6 +14,7 @@ import Control.Category ((>>>))
 import Control.Monad (guard)
 import Control.Monad.State (evalState, gets, modify)
 import Data.Bifunctor (first)
+import Data.Char (isAlphaNum)
 import Data.FileEmbed (embedFile)
 import Data.Foldable (asum)
 import Data.Function ((&))
@@ -150,7 +151,11 @@ importGraphviz source path = withDatabase "importing graphviz" path $ \database 
     Map.assocs indexedNodes <&> \(nodeID, (nodeIdx, (_, attributes))) ->
       let label = getLabel nodeID attributes
           (nodeData, nodeType) = case Text.splitOn "\\n" label of
-            nodeType : rest@(_ : _) -> (Text.intercalate "\\n" rest, nodeType)
+            nodeType : rest@(_ : _) ->
+              let allowed c = isAlphaNum c || c == "_"
+                  nodeType' = Text.filter allowed nodeType
+                  nodeData' = Text.intercalate " " $ nodeType' : rest
+               in (nodeData', nodeType')
             [nodeData] -> (nodeData, nodeID)
             _ -> error "unexpected graphviz node label"
        in SQLInteger nodeIdx : (SQLText <$> [nodeID, nodeData, nodeType])

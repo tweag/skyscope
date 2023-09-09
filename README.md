@@ -3,7 +3,7 @@
 
 A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/reference/skyframe) graphs.
 
-![demo](https://github.com/tweag/skyscope/blob/31854a93d861acf404016607d5b70f308e6ae89b/img/demo.gif)
+![demo](https://github.com/tweag/skyscope/blob/6ead005df1ba8e23bc1f95b3cc7be7171ab756ea/img/demo.gif)
 
 ## Table of Contents
 
@@ -26,6 +26,7 @@ A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/refere
   - [Changing CSS colours and styles](#changing-css-colours-and-styles)
   - [Changing node label formatting](#changing-node-label-formatting)
   - [Environment variable glossary](#environment-variable-glossary)
+  - [General Purpose Use](#general-purpose-use)
 - [Architectural Overview](#architectural-overview)
 - [Contributing](#contributing)
 <!-- END-TOC -->
@@ -46,7 +47,7 @@ brew install graphviz
 
 ### Option 1: Download a single binary (Linux only)
 
-If you're running Linux, you can download Skyscope as a prebuilt binary:
+If you're running Linux, you can download Skyscope as a prebuilt statically linked binary:
 
 1. Go to the [releases page](https://github.com/tweag/skyscope/releases) and
 pick the version you want. The latest is
@@ -64,7 +65,7 @@ export PATH="$HOME/.local/skyscope/bin:$PATH"
 
 ### Option 2: Build and run it from source (requires [Nix](https://nixos.org/download.html))
 
-If you're running MacOS you'll need to build Skyscope yourself:
+If you're running MacOS, you'll need to build Skyscope yourself:
 
 1. Clone the repository:
 ```bash
@@ -109,7 +110,7 @@ you must use the search box to find and display nodes of interest. The pattern
 you enter here is matched against node keys, as they are printed by `bazel dump
 --skyframe`. You may use `%` as a wildcard.
 
-![usage-1](https://github.com/tweag/skyscope/blob/31854a93d861acf404016607d5b70f308e6ae89b/img/usage-1.png)
+![usage-1](https://github.com/tweag/skyscope/blob/6ead005df1ba8e23bc1f95b3cc7be7171ab756ea/img/usage-1.png)
 
 As you type, the list of results will be dynamically updated and the matching
 part of each key highlighted. To keep the interface responsive only a few
@@ -127,7 +128,7 @@ to other visible nodes are displayed. This helps keep the complexity of the
 graph manageable. Visible nodes may be toggled between the _collapsed_ and
 _expanded_ states by clicking on them.
 
-![usage-2](https://github.com/tweag/skyscope/blob/31854a93d861acf404016607d5b70f308e6ae89b/img/usage-2.png)
+![usage-2](https://github.com/tweag/skyscope/blob/6ead005df1ba8e23bc1f95b3cc7be7171ab756ea/img/usage-2.png)
 
 When a node has been expanded all its edges are displayed, including edges
 connected to hidden nodes. Hidden nodes are represented by small unlabelled
@@ -141,13 +142,13 @@ If one connected component of the graph depends on another, the dependency path
 will be represented by a dotted edge between the components. You can make the
 nodes on the dependency path visible by clicking _Open_:
 
-![usage-3](https://github.com/tweag/skyscope/blob/31854a93d861acf404016607d5b70f308e6ae89b/img/usage-3.png)
+![usage-3](https://github.com/tweag/skyscope/blob/6ead005df1ba8e23bc1f95b3cc7be7171ab756ea/img/usage-3.png)
 
 This feature can be used to discover how a particular target depends on
 another, or how an action depends on a file. It works much like a `somepath`
 Bazel query.
 
-![usage-4](https://github.com/tweag/skyscope/blob/31854a93d861acf404016607d5b70f308e6ae89b/img/usage-4.png)
+![usage-4](https://github.com/tweag/skyscope/blob/6ead005df1ba8e23bc1f95b3cc7be7171ab756ea/img/usage-4.png)
 
 ### Hiding visible nodes
 
@@ -155,7 +156,7 @@ Collapsing nodes can help keep the size of the graph manageable, but it will
 still grow too complex from time to time. When this happens you can crop the
 graph to a smaller selection of nodes:
 
-![usage-5](https://github.com/tweag/skyscope/blob/31854a93d861acf404016607d5b70f308e6ae89b/img/usage-5.png)
+![usage-5](https://github.com/tweag/skyscope/blob/6ead005df1ba8e23bc1f95b3cc7be7171ab756ea/img/usage-5.png)
 
 To do this, press and hold the shift key while you make your selection. Upon
 releasing the shift key, the graph will be updated and only the selected nodes
@@ -311,7 +312,6 @@ in your browser console.
 
 ### Environment variable glossary
 
-
 | Variable Name        | Description                                                                           |
 |----------------------|---------------------------------------------------------------------------------------|
 | `SKYSCOPE_PORT`      | Port on which the Skyscope HTTP server should listen. Defaults to `28581`.            |
@@ -319,6 +319,38 @@ in your browser console.
 | `SKYSCOPE_DEBUG`     | Execution tracing is enabled for the wrapper scripts when this variable is set. |
 | `SKYSCOPE_FORMAT_JS` | Set this to the path of a [Javascript file](https://github.com/tweag/skyscope/blob/master/frontend/src/format.js) to override the embedded node formatting. |
 | `SKYSCOPE_THEME_CSS` | Set this to the path of a [CSS file](https://github.com/tweag/skyscope/blob/master/frontend/src/theme.css) to override the embedded theme. |
+
+### General Purpose Use
+
+In addition to importing Bazel Skyframe graphs, Skyscope also supports
+importing arbitrary graphs in Graphviz format (provided they can be parsed by
+the Haskell [Graphviz](https://hackage.haskell.org/package/graphviz) library).
+Just send the graph on standard input to `skyscope import-graphviz`, e.g.
+
+```bash
+skyscope import-graphviz < graph.dot
+```
+
+Or via a pipe:
+
+```bash
+echo 'digraph G { A -> B; }' | skyscope import-graphviz
+```
+
+You can give labels to nodes, and by convention the first line becomes the node
+title. For example, the following graph definition:
+
+```dot
+digraph G {
+  A [ label="Alpha\nDetail for alpha" ];
+  B [ label="Beta\nDetail for beta" ];
+  A -> B;
+}
+```
+
+Looks like this in Skyscope:
+
+![general-purpose-example](https://github.com/tweag/skyscope/blob/6ead005df1ba8e23bc1f95b3cc7be7171ab756ea/img/general-purpose-example.png)
 
 ## Architectural Overview
 
@@ -328,7 +360,7 @@ extracts the Skyframe data from Bazel and inserts it into an Sqlite database.
 After this is done it notifies the server of the newly imported graph. The
 server keeps track of all imported graphs in a central Sqlite database.
 
-![architecture](https://github.com/tweag/skyscope/blob/31854a93d861acf404016607d5b70f308e6ae89b/img/architecture.svg)
+![architecture](https://github.com/tweag/skyscope/blob/6ead005df1ba8e23bc1f95b3cc7be7171ab756ea/img/architecture.svg)
 
 The frontend is responsible for storing the node configuration (i.e. which
 nodes are visible) and whenever this changes it sends a request to the backend
