@@ -2,6 +2,7 @@
 
 
 A tool for visualising and exploring Bazel [Skyframe](https://bazel.build/reference/skyframe) graphs.
+Has support for arbitrary `dot` graphs too.
 
 ![demo](https://github.com/tweag/skyscope/blob/6ead005df1ba8e23bc1f95b3cc7be7171ab756ea/img/demo.gif)
 
