@@ -88,8 +88,7 @@ some effect on it.
 
 To view a Skyframe graph you must first import a snapshot of its current state
 into Skyscope. If you have `skyscope` in your `PATH` variable, this can be done
-by running `skyscope import` under the workspace. If you've added it to your
-`WORKSPACE` file, you should instead do `bazel run @skyscope//:import`.[^1]
+by running `skyscope import` under the workspace.
 
 Depending on the size of the Skyframe graph, the import process might take a
 few minutes. Note that the graph is initially empty when the Bazel server
@@ -169,7 +168,7 @@ So if you make a mistake you can undo it by hitting the back button (the
 forward button will allow you to redo an undone action). This feature is also
 useful when an action causes a large transformation to the graph. Nodes are
 animated into their new positions, so jumping back and forth a few times with
-keyboard shortcuts[^2] and watching how the nodes move can help you orientate
+keyboard shortcuts[^1] and watching how the nodes move can help you orientate
 yourself in the new layout.
 
 For graphs with a small number of visible nodes, rendering is fast enough to be
@@ -193,7 +192,7 @@ browser (not all image viewers fully support the CSS embedded in it).
 
 When you run `skyscope import` the Skyscope server is automatically started (or
 restarted if it was already running). If you wish to start the server without
-importing a new graph, just run `skyscope server`[^1].
+importing a new graph, just run `skyscope server`.
 
 ### Extra context for targets and actions
 
@@ -239,7 +238,7 @@ bazel query 'deps(//...)' --output build  # Additional context for targets
 If either of these commands fail (e.g. because some matching targets are
 broken) the import will still continue, but the additional context will be
 missing. In this situation you can use the `--aquery` and `--query`
-parameters to specify the queries Skyscope should run:[^1]
+parameters to specify the queries Skyscope should run:
 
 ```bash
 skyscope import --query='//src/...' --aquery='//src/main/...'
@@ -376,8 +375,5 @@ Pull requests are also welcome, but for non-trivial changes please discuss the
 change you have in mind first so we can agree on an approach. If there is an
 existing issue you can comment on that, otherwise you can open a new issue.
 
-[^1]: In this case, you should take subsequent references to `skyscope COMMAND
-ARGS` to mean `bazel run -- @skyscope//:COMMAND ARGS`.
-
-[^2]: Usually _Alt + Left Arrow_ to go back and _Alt + Right Arrow_ to go
+[^1]: Usually _Alt + Left Arrow_ to go back and _Alt + Right Arrow_ to go
 forward.
