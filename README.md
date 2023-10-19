@@ -165,7 +165,7 @@ will be visible. You can also hide individual nodes by ctrl clicking.
 ### Browser history and checkpoints
 
 Every action you take in exploring the graph is added to your browser history.
-So if you make a mistake you can undo it by hitting the back button (the
+So if you make a mistake, you can undo it by hitting the back button (the
 forward button will allow you to redo an undone action). This feature is also
 useful when an action causes a large transformation to the graph. Nodes are
 animated into their new positions, so jumping back and forth a few times with
