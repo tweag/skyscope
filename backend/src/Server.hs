@@ -29,7 +29,7 @@ import Data.Functor (void, (<&>))
 import Data.HList (Label (..))
 import Data.HList.Record (emptyRecord, (.*.), (.=.))
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe, fromJust)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -112,7 +112,10 @@ server port = withImportDb $ \importDatabase -> do
   Web.scottyOpts opts $ do
     Web.post "/" $
       Json.eitherDecode <$> Web.body >>= \case
-        Right (tag, path) -> Web.json =<< liftIO (addImport importDatabase tag path)
+        Right (tag, path) -> Web.json =<< do
+          Import{..} <- fromJust <$> liftIO (addImport importDatabase tag path)
+          void $ withMemo importId $ Query.findPath importPath "" ""  -- Cause predMap to be computed and cached
+          pure Import{..}
         Left err -> badRequest err
 
     Web.get "/" $
