@@ -137,7 +137,7 @@ renderGraph database dbPath nodeStates = do
           label = nodeType <> "\\n" <> truncatedNodeData
           nodeState = Map.lookup nodeHash nodeStates
           hidden = nodeState == Nothing
-       in "    node_" <> nodeHash
+       in "    \"node_" <> nodeHash <> "\""
             <> graphvizAttributes
               [ ("tooltip", truncatedNodeData),
                 ("class", Text.pack $ fromMaybe "" $ show <$> nodeState),
@@ -151,7 +151,7 @@ renderGraph database dbPath nodeStates = do
 
     graphvizEdge :: [(Text, Text)] -> Edge -> Text
     graphvizEdge attrs (Edge _ source target) =
-      "    node_" <> source <> " -> node_" <> target
+      "    \"node_" <> source <> "\" -> \"node_" <> target <> "\""
         <> graphvizAttributes (attrs ++ [("id", source <> "_" <> target)])
 
     graphvizAttributes :: [(Text, Text)] -> Text
