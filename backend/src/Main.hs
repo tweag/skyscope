@@ -14,6 +14,7 @@ import Data.Bifunctor (first, second)
 import Data.Foldable (traverse_)
 import Data.Functor (void, (<&>))
 import Data.List (isPrefixOf, stripPrefix)
+import Data.Maybe (fromMaybe)
 import qualified Import
 import Network.HTTP.Client (Request (..), RequestBody (..), defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody)
 import qualified Server
@@ -78,9 +79,10 @@ importGraphviz args = importNew tag $ Import.importGraphviz stdin
 importWorkspace :: [String] -> IO ()
 importWorkspace args = importNew Nothing $ \dbPath -> do
   let withBazel args f = do
-        logCommand "bazel" args
+        bazel <- getBazelPath
+        logCommand bazel args
         withCreateProcess
-          (proc "bazel" args)
+          (proc bazel args)
             { std_in = CreatePipe,
               std_out = CreatePipe,
               std_err = Inherit
@@ -107,7 +109,9 @@ importWorkspace args = importNew Nothing $ \dbPath -> do
           "detailed" <$ setEnv "SKYSCOPE_LEGACY_BAZEL" "1"
         | otherwise -> pure "deps"
       Nothing -> "deps" <$ putStrLn "unable to determine bazel version, assuming latest"
-  withStdinFrom "bazel" ["dump", "--skyframe=" <> dumpSkyframeOpt] (Import.importSkyframe dbPath)
+
+  bazel <- getBazelPath
+  withStdinFrom bazel ["dump", "--skyframe=" <> dumpSkyframeOpt] (Import.importSkyframe dbPath)
 
 parseImportArgs :: [String] -> (String, String)
 parseImportArgs = \case
@@ -189,22 +193,28 @@ logCommand :: String -> [String] -> IO ()
 logCommand command args = putStrLn $ "\x1b[1;37m" <> command <> " " <> unwords args <> "\x1b[0m"
 
 getBazelOutputBase :: IO FilePath
-getBazelOutputBase =
-  lines <$> readProcess "bazel" ["info", "output_base"] "" <&> \case
+getBazelOutputBase = do
+  bazel <- getBazelPath
+  lines <$> readProcess bazel ["info", "output_base"] "" <&> \case
     outputBase : _ -> outputBase
     _ -> error "failed to get output_base"
 
 getBazelWorkspace :: IO FilePath
-getBazelWorkspace =
-  lines <$> readProcess "bazel" ["info", "workspace"] "" <&> \case
+getBazelWorkspace = do
+  bazel <- getBazelPath
+  lines <$> readProcess bazel ["info", "workspace"] "" <&> \case
     workspace : _ -> workspace
     _ -> error "failed to get workspace"
 
 getBazelVersion :: IO (Maybe String)
 getBazelVersion = do
+  bazel <- getBazelPath
   let find = \case
         [] -> Nothing
         line : remaining -> case stripPrefix "Build label: " line of
           Just version -> pure version
           Nothing -> find remaining
-  lines <$> readProcess "bazel" ["version"] "" <&> find
+  lines <$> readProcess bazel ["version"] "" <&> find
+
+getBazelPath :: IO FilePath
+getBazelPath = fromMaybe "bazel" <$> getSkyscopeEnv "BAZEL_BIN"
