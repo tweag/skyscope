@@ -106,7 +106,7 @@ importWorkspace args = importNew Nothing $ \dbPath -> do
             ] ->
           "detailed" <$ setEnv "SKYSCOPE_LEGACY_BAZEL" "1"
         | otherwise -> pure "deps"
-      Nothing -> error "unable to determine bazel version"
+      Nothing -> "deps" <$ putStrLn "unable to determine bazel version, assuming latest"
   withStdinFrom "bazel" ["dump", "--skyframe=" <> dumpSkyframeOpt] (Import.importSkyframe dbPath)
 
 parseImportArgs :: [String] -> (String, String)
