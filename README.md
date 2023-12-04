@@ -319,6 +319,7 @@ in your browser console.
 | `SKYSCOPE_DEBUG`     | Execution tracing is enabled for the wrapper scripts when this variable is set. |
 | `SKYSCOPE_FORMAT_JS` | Set this to the path of a [Javascript file](https://github.com/tweag/skyscope/blob/master/frontend/src/format.js) to override the embedded node formatting. |
 | `SKYSCOPE_THEME_CSS` | Set this to the path of a [CSS file](https://github.com/tweag/skyscope/blob/master/frontend/src/theme.css) to override the embedded theme. |
+| `SKYSCOPE_BAZEL_BIN` | Use this bazel binary instead of whatever is found in your PATH. |
 
 ### General Purpose Use
 
