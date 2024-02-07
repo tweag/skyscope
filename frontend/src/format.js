@@ -70,6 +70,13 @@ const detail = function () {
                 return match[1];
             }
             break;
+        case "BuildConfiguration":
+            console.log(`BuildConfiguration: ${node.data}`);
+            match = node.data.match(/BuildConfigurationKey\[([0-9a-f]{64})\]/);
+            if (match != null) {
+                return match[1].slice(0, 16);
+            }
+            break;
     }
     return "";
 } ();

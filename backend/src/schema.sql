@@ -28,5 +28,5 @@ CREATE TABLE IF NOT EXISTS path (
 CREATE TABLE IF NOT EXISTS context (
   context_key TEXT,
   context_data TEXT,
-  PRIMARY KEY (context_key)
+  PRIMARY KEY (context_key) ON CONFLICT REPLACE
 );

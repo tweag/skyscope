@@ -10,13 +10,12 @@
 module Query where
 
 import Common
-import System.IO.Error (isDoesNotExistError)
 import Control.Category ((>>>))
-import Control.Monad (guard)
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar)
 import Control.Concurrent.STM.TVar (TVar)
 import Control.Exception (onException, tryJust)
+import Control.Monad (guard)
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
@@ -44,6 +43,7 @@ import GHC.Generics (Generic)
 import Model
 import Sqlite (Database)
 import qualified Sqlite
+import System.IO.Error (isDoesNotExistError)
 import Prelude
 
 type Pattern = Text
@@ -77,12 +77,13 @@ makePathFinder = memoize "makePathFinder" getMakePathFinderMemo $ \dbPath -> lif
     void $ Sqlite.executeSql database ["DELETE FROM path;"] []
     nodeCount <- Sqlite.executeSqlScalar database ["SELECT COUNT(idx) FROM node;"] [] <&> fromSQLInt
     let predMapFile = dbPath <> ".predMap"
-    predMap <- tryJust (guard . isDoesNotExistError) (read <$> readFile predMapFile) >>= \case
-      Right predMap -> pure predMap
-      Left _ -> do
-        predMap <- makePredMap database nodeCount
-        writeFile predMapFile $ show predMap
-        pure predMap
+    predMap <-
+      tryJust (guard . isDoesNotExistError) (read <$> readFile predMapFile) >>= \case
+        Right predMap -> pure predMap
+        Left _ -> do
+          predMap <- makePredMap database nodeCount
+          writeFile predMapFile $ show predMap
+          pure predMap
     let predMapSize = length predMap
     predMapPtr <- Marshal.mallocArray predMapSize
     Marshal.pokeArray predMapPtr $ fromIntegral <$> predMap

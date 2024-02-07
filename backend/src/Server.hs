@@ -29,7 +29,7 @@ import Data.Functor (void, (<&>))
 import Data.HList (Label (..))
 import Data.HList.Record (emptyRecord, (.*.), (.=.))
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe, fromJust)
+import Data.Maybe (catMaybes, fromJust, fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -112,10 +112,11 @@ server port = withImportDb $ \importDatabase -> do
   Web.scottyOpts opts $ do
     Web.post "/" $
       Json.eitherDecode <$> Web.body >>= \case
-        Right (tag, path) -> Web.json =<< do
-          Import{..} <- fromJust <$> liftIO (addImport importDatabase tag path)
-          void $ withMemo importId $ Query.findPath importPath "" ""  -- Cause predMap to be computed and cached
-          pure Import{..}
+        Right (tag, path) ->
+          Web.json =<< do
+            Import {..} <- fromJust <$> liftIO (addImport importDatabase tag path)
+            void $ withMemo importId $ Query.findPath importPath "" "" -- Cause predMap to be computed and cached
+            pure Import {..}
         Left err -> badRequest err
 
     Web.get "/" $
@@ -165,6 +166,10 @@ server port = withImportDb $ \importDatabase -> do
       let importIdText = Text.pack $ show importId
       mainJs <- liftIO $ mainJs importIdText importTag
       html ("<script>" <> mainJs <> "</script>") ""
+
+    Web.get "/:importId/metadata" $
+      let route Import {..} _ = pure Import {..}
+       in Web.json =<< importRoute importDatabase route
 
     Web.post "/:importId/path" $
       Json.eitherDecode <$> Web.body >>= \case

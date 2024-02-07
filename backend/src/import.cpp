@@ -162,7 +162,7 @@ ParseResult parseNodeBazel6(ParseState& state, Graph& graph) { /*
 */  
     while (true) {
         auto remaining = state.remaining();
-        // cerr << "remaining: " << remaining.substr(0, 80) << "..." << endl << "[...]" << endl;
+        //cerr << "remaining: " << remaining.substr(0, 80) << "..." << endl << "[...]" << endl;
         auto eol = remaining.find("\n");
         if (eol == string::npos) {
             // line is partial
@@ -173,9 +173,9 @@ ParseResult parseNodeBazel6(ParseState& state, Graph& graph) { /*
             return ParseResult::DONE;
         }
         auto indent = remaining.find_first_not_of(' ');
-        // cerr << "indent: " << indent << ", eol:" << eol << endl;
+        // //cerr << "indent: " << indent << ", eol:" << eol << endl;
         auto node = string(remaining.substr(indent, eol - indent));
-        // cerr << "node: " << node << endl;
+        // //cerr << "node: " << node << endl;
         if (indent == 0) {
             // A new node
             state.source = 0;
@@ -192,7 +192,7 @@ ParseResult parseNodeBazel6(ParseState& state, Graph& graph) { /*
         }
         auto colon = node.find(':');
         if (colon == string::npos) {
-            // cerr << node << endl;
+            // //cerr << node << endl;
             state.error("missing colon in key");
             return ParseResult::FAIL;
         }
