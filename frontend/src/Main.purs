@@ -73,7 +73,7 @@ import Web.UIEvent.KeyboardEvent as KeyboardEvent
 import Web.UIEvent.KeyboardEvent.EventTypes (keydown, keyup) as EventTypes
 import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as MouseEvent
-import Web.UIEvent.MouseEvent.EventTypes (mouseenter, mouseleave, mousemove) as EventTypes
+import Web.UIEvent.MouseEvent.EventTypes (dblclick, mouseenter, mouseleave, mousemove) as EventTypes
 
 main :: Effect Unit
 main = do
@@ -182,7 +182,6 @@ makeTools graph nodeConfiguration = do
     , makeOpenPath
     , makeCrop
     , makeToggleVisibility
-
     ]
 
   pure \element event ->
@@ -209,7 +208,7 @@ makeTools graph nodeConfiguration = do
               when (hash == firstHash) do
                 launchAff $ showNeighbours node
             Nothing -> do
-              if MouseEvent.ctrlKey event
+              if MouseEvent.ctrlKey || MouseEvent.altKey $ event
                 then nodeConfiguration.hide hash
                 else containsClass node "Collapsed" >>= if _
                   then nodeConfiguration.show hash Expanded
@@ -416,7 +415,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
             Element.getAttribute "xlink:title" anchor >>= case _ of
               Just nodeData -> do
                 let label = join $ Regex.match labelRegex nodeData <#> Array.NonEmpty.head
-                    labelRegex = Regex.unsafeRegex "(@[-\\w]+)?//(/?[^/:,}\\]]+)*(:[^/,}\\]]+(/[^/,}\\]]+)*)?" Regex.noFlags
+                    labelRegex = Regex.unsafeRegex "(@[.-\\w]+)?//(/?[^/:,}\\]]+)*(:[^/,}\\]]+(/[^/,}\\]]+)*)?" Regex.noFlags
                 addClass background "Selectable"
                 case text of
                   Just { title, detail } -> do
@@ -591,13 +590,24 @@ createSearchBox nodeConfiguration = do
         fromRight "" (formatNumber "0,0" total) <> " nodes") nodeCount
 
   searchResults <- createElement "div" "SearchResults" $ Just searchBox
+
+  let collapseSearch :: Effect Unit
+      collapseSearch = do
+        removeAllChildren searchResults
+        updateNodeCount "" =<< Ref.read nodeCountMaxRef
+        Node.setNodeValue "" $ Element.toNode patternInput
+        traverse_ (HTMLInputElement.setValue "") (HTMLInputElement.fromElement patternInput)
+        traverse_ HTMLElement.blur (HTMLElement.fromElement patternInput)
+        Ref.write Nothing previousPattern
+        removeClass searchBox "Expanded"
+
   let renderResults :: NodeResults -> String -> Effect Unit
       renderResults results pattern = do
         removeAllChildren searchResults
-        sequence_ $ Object.toArrayWithKey (renderResultRow pattern) results.resultNodes
+        sequence_ $ Object.toArrayWithKey (renderResultRow pattern results) results.resultNodes
 
-      renderResultRow :: String -> NodeHash -> { nodeData :: String, nodeType :: String } -> Effect Unit
-      renderResultRow pattern hash node = do
+      renderResultRow :: String -> NodeResults -> NodeHash -> { nodeData :: String, nodeType :: String } -> Effect Unit
+      renderResultRow pattern results hash node = do
         row <- createElement "div" "" $ Just searchResults
         let updateSelected = visible >>= if _
               then removeClass row "Selected"
@@ -606,9 +616,15 @@ createSearchBox nodeConfiguration = do
               then nodeConfiguration.show hash Collapsed *> updateSelected
               else nodeConfiguration.hide hash *> updateSelected
             visible = Array.notElem hash <$> nodeConfiguration.visible
-        listener <- EventTarget.eventListener $ const toggleSelected
-        EventTarget.addEventListener EventTypes.click
-          listener false $ Element.toEventTarget row
+        toggleListener <- EventTarget.eventListener $ const toggleSelected
+        EventTarget.addEventListener EventTypes.click toggleListener false $ Element.toEventTarget row
+        showAllListener <- EventTarget.eventListener $ const $ do
+          let count = show $ Object.size results.resultNodes
+              message = "Make all " <> count <> " matching nodes visible?"
+          HTML.window >>= Window.confirm message >>= not >>> if _ then pure unit else do
+            for_ (Object.keys results.resultNodes) (flip nodeConfiguration.show Collapsed)
+          collapseSearch
+        EventTarget.addEventListener EventTypes.dblclick showAllListener false $ Element.toEventTarget row
         let formattedNodeType = formatNodeType node.nodeType
         addClass row formattedNodeType
         addClass row "ResultRow"
@@ -681,16 +697,6 @@ createSearchBox nodeConfiguration = do
       addClass searchBox "Expanded"
       launchAff $ updateSearch true
       resetSearchBoxFade
-
-  let collapseSearch :: Effect Unit
-      collapseSearch = do
-        removeAllChildren searchResults
-        updateNodeCount "" =<< Ref.read nodeCountMaxRef
-        Node.setNodeValue "" $ Element.toNode patternInput
-        traverse_ (HTMLInputElement.setValue "") (HTMLInputElement.fromElement patternInput)
-        traverse_ HTMLElement.blur (HTMLElement.fromElement patternInput)
-        Ref.write Nothing previousPattern
-        removeClass searchBox "Expanded"
 
   onKeyUp "Escape" collapseSearch
 

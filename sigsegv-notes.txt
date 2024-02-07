@@ -1,0 +1,20 @@
+
+    #    (gdb) info thread
+    #      Id   Target Id                Frame
+    #    * 1    LWP 1008843 "skyscope"   0x0000000001cce860 in resumeThread ()
+    #      2    LWP 1008844 "ghc_ticker" 0x00007ffff7ca1664 in read () from /nix/store/9xfad3b5z4y00mzmk2wnn4900q0qmxns-glibc-2.35-224/lib/libc.so.6
+    #      3    LWP 1008845 "skyscope:w" 0x00007ffff7cb2347 in epoll_wait () from /nix/store/9xfad3b5z4y00mzmk2wnn4900q0qmxns-glibc-2.35-224/lib/libc.so.6
+    #      4    LWP 1008846 "skyscope:w" 0x00007ffff7ca5709 in poll () from /nix/store/9xfad3b5z4y00mzmk2wnn4900q0qmxns-glibc-2.35-224/lib/libc.so.6
+    #      5    LWP 1008847 "skyscope:w" 0x00007ffff7c287d5 in __futex_abstimed_wait_common () from /nix/store/9xfad3b5z4y00mzmk2wnn4900q0qmxns-glibc-2.35-224/lib/libc.so.6
+    #    (gdb) bt
+    #    #0  0x0000000001cce860 in resumeThread ()
+    #    #1  0x0000000000417bf6 in Import_czuimportSkyframe_info ()
+    #    #2  0x0000004200004f90 in ?? ()
+    #    #3  0x0000000000000000 in ?? ()
+    #    
+    #    
+    #    
+    #    
+    #    => 0x417c56 <Import_czuimportSkyframe_info+294>:        jmp    *0x0(%rbp)
+
+

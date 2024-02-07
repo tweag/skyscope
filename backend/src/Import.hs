@@ -14,9 +14,9 @@ import Control.Category ((>>>))
 import Control.Monad (guard)
 import Control.Monad.State (evalState, gets, modify)
 import Data.Bifunctor (first)
-import Data.Char (isAlphaNum)
+import Data.Char (isAlphaNum, isSpace)
 import Data.FileEmbed (embedFile)
-import Data.Foldable (asum)
+import Data.Foldable (asum, for_)
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.GraphViz (DotGraph)
@@ -28,7 +28,7 @@ import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -79,53 +79,67 @@ importTargets :: Handle -> FilePath -> IO ()
 importTargets source path = withDatabase "importing targets" path $ \database -> do
   workspace <- maybe "" Text.pack <$> getSkyscopeEnv "WORKSPACE"
   external <- maybe "" Text.pack <$> getSkyscopeEnv "OUTPUT_BASE" <&> (<> "/external/")
+
   let parseRepository text = case Text.stripPrefix ("# " <> workspace) text of
         Just text -> ("/", text)
         Nothing -> case Text.stripPrefix ("# " <> external) text of
           Just text -> first (("@" <>) >>> (<> "/")) (Text.breakOn "/" text)
-          Nothing -> error $ "failed to parse target label:\n" <> Text.unpack text
+          Nothing -> errorRed $ "failed to parse target label:\n" <> Text.unpack text
+
       parsePackage text =
         parseRepository text & \(repo, text) -> case Text.stripPrefix "/BUILD" text of
           Just _ -> (repo <> "/", text)
           Nothing -> first (repo <>) (Text.breakOn "/BUILD" text)
+
       parseLabel text =
         parsePackage text & \(package, text) ->
           ((package <> ":") <>) $ fst $ findLine "  name = \"" text & Text.break (== '"')
-  targets <- map (parseLabel &&& id) <$> getParagraphs source
+
+  targets <- map (parseLabel &&& id) <$> getParagraphs source (Text.any (/= '\n'))
+  for_ targets $ \(label, _) -> putStrLn $ "importing target " <> Text.unpack label
   addContext database targets
 
 importActions :: Handle -> FilePath -> IO ()
 importActions source path = withDatabase "importing actions" path $ \database -> do
   let parseAction paragraph = (findLine "  Target: " paragraph, paragraph)
-      indexedActions group = (0 :| [1 ..]) `NonEmpty.zip` (snd <$> group)
+      indexedActions group = (1 :| [2 ..]) `NonEmpty.zip` (snd <$> group)
       filterActions = filter $ \paragraph ->
-        isJust $
-          asum
-            [ Text.stripPrefix "action " paragraph,
-              Text.stripPrefix "runfiles " paragraph,
-              Text.stripPrefix "BazelCppSemantics" paragraph
-            ]
+        let stripValidPrefix =
+              fmap asum $
+                sequenceA
+                  [ Text.stripPrefix "action '",
+                    Text.stripPrefix "runfiles for ",
+                    Text.stripPrefix "BazelCppSemantics"
+                  ]
+         in case stripValidPrefix paragraph of
+              Just _ -> True
+              Nothing
+                | Text.all isSpace paragraph -> False
+                | otherwise -> False -- errorRed $ "failed to parse action:\n" <> Text.unpack paragraph
   groups <-
     NonEmpty.groupBy (\x y -> fst x == fst y)
       . sortOn fst
       . map parseAction
       . filterActions
-      <$> getParagraphs source
-  addContext database $
-    concat $
-      groups <&> \group@((label, _) :| _) ->
-        NonEmpty.toList $
-          indexedActions group <&> \(index, contextData) ->
-            let contextKey = label <> " " <> Text.pack (show @Integer index)
-             in (contextKey, contextData)
+      <$> getParagraphs source (const True)
 
-getParagraphs :: Handle -> IO [Text]
-getParagraphs source = filter (Text.any (/= '\n')) . Text.splitOn "\n\n" <$> Text.hGetContents source
+  let actions =
+        concat $
+          groups <&> \group@((label, _) :| _) ->
+            NonEmpty.toList $
+              indexedActions group <&> \(index, contextData) ->
+                let contextKey = label <> " " <> Text.pack (show @Integer index)
+                 in (contextKey, contextData)
+  for_ actions $ \(label, _) -> putStrLn $ "importing action " <> Text.unpack label
+  addContext database actions
+
+getParagraphs :: Handle -> (Text -> Bool) -> IO [Text]
+getParagraphs source predicate = filter predicate . Text.splitOn "\n\n" <$> Text.hGetContents source
 
 findLine :: Text -> Text -> Text
 findLine prefix paragraph =
   let find = \case
-        [] -> error $ "missing " <> Text.unpack prefix <> ":\n" <> Text.unpack paragraph
+        [] -> errorRed $ "missing " <> Text.unpack prefix <> ":\n" <> Text.unpack paragraph
         (line : lines) -> case Text.stripPrefix prefix line of
           Nothing -> find lines
           Just text -> text
@@ -137,7 +151,7 @@ importGraphviz source path = withDatabase "importing graphviz" path $ \database 
   let (nodes, edges) = (GraphViz.nodeInformation False &&& GraphViz.graphEdges) dotGraph
   let assignIndex node = gets (,node) <* modify (+ 1)
       indexedNodes = evalState (for nodes assignIndex) 1
-      coerceMaybe = fromMaybe $ error "parser produced an edge with an unknown node"
+      coerceMaybe = fromMaybe $ errorRed "parser produced an edge with an unknown node"
       indexedEdges = coerceMaybe $
         for edges $ \DotEdge {..} -> do
           sourceIndex <- fst <$> Map.lookup fromNode indexedNodes
@@ -157,8 +171,11 @@ importGraphviz source path = withDatabase "importing graphviz" path $ \database 
                   nodeData' = Text.intercalate " " $ nodeType' : rest
                in (nodeData', nodeType')
             [nodeData] -> (nodeData, nodeID)
-            _ -> error "unexpected graphviz node label"
+            _ -> errorRed "unexpected graphviz node label"
        in SQLInteger nodeIdx : (SQLText <$> [nodeID, nodeData, nodeType])
   Sqlite.batchInsert database "edge" ["group_num", "source", "target"] $
     indexedEdges <&> \(g, s, t) -> SQLInteger <$> [g, s, t]
   putStrLn $ path <> "\n    imported " <> show (Map.size nodes) <> " nodes and " <> show (length edges) <> " edges"
+
+errorRed :: String -> a
+errorRed message = error $ "\x1b[31m" <> message <> "\x1b[0m"
