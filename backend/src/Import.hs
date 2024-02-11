@@ -61,19 +61,44 @@ withDatabase label path action = timed label $
       let sql = Text.decodeUtf8 $(embedFile "backend/src/schema.sql")
       Sqlite.executeStatements database $ Text.lines <$> Text.splitOn "\n\n" sql
 
+importSkyframe :: FilePath -> IO ()
+importSkyframe path =
+  withDatabase "importing skyframe" path $ \database -> do
+    guard =<< withCString path c_importSkyframe
+    extractContextKeys database
+
+foreign import ccall safe "import.cpp"
+  c_importSkyframe :: CString -> IO Bool
+
+extractContextKeys :: Database -> IO ()
+extractContextKeys =
+  Sqlite.executeStatement
+    [ "UPDATE node SET context_key = CASE",
+      when "CONFIGURED_TARGET" label,
+      when "ACTION_EXECUTION" $ label <> " || ' ' || " <> actionIndex,
+      when "BUILD_CONFIGURATION" config,
+      "ELSE NULL END"
+    ]
+  where
+    when nodeType expr = "WHEN glob('" <> nodeType <> ":*', data) THEN " <> expr
+    label = extract "label=" {- //some/target:label -} ", config="
+    actionIndex = extract "actionIndex=" {- 0 -} "}"
+    config = extract "BuildConfigurationKey[" "]"
+    extract prefix suffix =
+      let i = "INSTR(data, '" <> prefix <> "')"
+          j = "INSTR(SUBSTR(data, " <> i <> "),'" <> suffix <> "')"
+       in Text.pack $
+            unlines
+              [ "SUBSTR(data, ",
+                i <> " + " <> show (length prefix) <> ", ",
+                j <> " - " <> show (length prefix + 1),
+                ")"
+              ]
+
 addContext :: Database -> [(Text, Text)] -> IO ()
 addContext database context = do
   let records = context <&> \(k, v) -> [SQLText k, SQLText v]
   Sqlite.batchInsert database "context" ["context_key", "context_data"] records
-
-importSkyframe :: FilePath -> IO ()
-importSkyframe path =
-  withDatabase "importing skyframe" path $
-    const $ -- withDatabase creates the schema
-      guard =<< withCString path c_importSkyframe
-
-foreign import ccall safe "import.cpp"
-  c_importSkyframe :: CString -> IO Bool
 
 importTargets :: Handle -> FilePath -> IO ()
 importTargets source path = withDatabase "importing targets" path $ \database -> do
@@ -102,7 +127,7 @@ importTargets source path = withDatabase "importing targets" path $ \database ->
 importActions :: Handle -> FilePath -> IO ()
 importActions source path = withDatabase "importing actions" path $ \database -> do
   let parseAction paragraph = (findLine "  Target: " paragraph, paragraph)
-      indexedActions group = (1 :| [2 ..]) `NonEmpty.zip` (snd <$> group)
+      indexedActions group = (0 :| [1 ..]) `NonEmpty.zip` (snd <$> group)
       filterActions = filter $ \paragraph ->
         let stripValidPrefix =
               fmap asum $

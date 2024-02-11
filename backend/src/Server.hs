@@ -85,14 +85,12 @@ server port = withImportDb $ \importDatabase -> do
               pure memo
       newMemo = do
         makePathFinderMemo <- newTVar Map.empty
-        floodNodesMemo <- newTVar Map.empty
         filterNodesMemo <- newTVar Map.empty
         getNeighboursMemo <- newTVar Map.empty
         getContextMemo <- newTVar Map.empty
         unifyComponentsMemo <- newTVar Map.empty
         pure $
           ((Label :: Label "makePathFinder") .=. makePathFinderMemo)
-            .*. ((Label :: Label "floodNodes") .=. floodNodesMemo)
             .*. ((Label :: Label "filterNodes") .=. filterNodesMemo)
             .*. ((Label :: Label "getNeighbours") .=. getNeighboursMemo)
             .*. ((Label :: Label "getContext") .=. getContextMemo)
@@ -178,17 +176,10 @@ server port = withImportDb $ \importDatabase -> do
            in Web.json =<< importRoute importDatabase route
         Left err -> badRequest err
 
-    Web.post "/:importId/flood" $
-      Json.eitherDecode <$> Web.body >>= \case
-        Right (source, pattern, types) ->
-          let route Import {..} database = withMemo importId $ Query.floodNodes database 256 source pattern types
-           in Web.json =<< importRoute importDatabase route
-        Left err -> badRequest err
-
     Web.post "/:importId/filter" $
       Json.eitherDecode <$> Web.body >>= \case
-        Right pattern ->
-          let route Import {..} database = withMemo importId $ Query.filterNodes database 256 pattern
+        Right params ->
+          let route Import {..} database = withMemo importId $ Query.filterNodes database params
            in Web.json =<< importRoute importDatabase route
         Left err -> badRequest err
 

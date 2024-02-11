@@ -5,7 +5,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Query where
 
@@ -19,6 +22,7 @@ import Control.Monad (guard)
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.RWS (RWS, evalRWS)
 import Control.Monad.RWS.Class
+import Control.Monad.Trans.State (StateT (..), evalStateT)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.ByteString as BS
 import Data.Functor (void, (<&>))
@@ -31,8 +35,12 @@ import Data.List (nub, sort)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes, fromMaybe)
+import Data.Sequence (Seq (..))
+import qualified Data.Sequence as Seq
 import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Traversable (for)
 import Database.SQLite3 (SQLData (..))
 import Foreign.C.Types (CInt (..), CLong (..))
@@ -48,8 +56,15 @@ import Prelude
 
 type Pattern = Text
 
+data FilterParams = FilterParams
+  { filterPattern :: Pattern,
+    filterOrigin :: Maybe NodeHash,
+    filterLimit :: Int64
+  }
+  deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
+
 data QueryResult = QueryResult
-  { resultTotalNodes :: Int,
+  { resultTotalNodes :: Int64,
     resultNodes :: NodeMap Node
   }
   deriving (Eq, Ord, Show, Generic, ToJSON, FromJSON)
@@ -185,9 +200,9 @@ makePathFinder = memoize "makePathFinder" getMakePathFinderMemo $ \dbPath -> lif
           offset <- get <* modify (+ (1 + n))
           pure $ negate offset
 
-    fromSQLInt :: Num a => SQLData -> a
-    fromSQLInt (SQLInteger n) = fromIntegral n
-    fromSQLInt value = error $ "expected data type" <> show value
+fromSQLInt :: Num a => SQLData -> a
+fromSQLInt (SQLInteger n) = fromIntegral n
+fromSQLInt value = error $ "expected data type" <> show value
 
 foreign import ccall safe "path.cpp"
   c_indexPaths ::
@@ -207,24 +222,7 @@ foreign import ccall safe "path.cpp"
     CInt -> -- maxLength
     IO CInt
 
-type FloodNodesMemo = TVar (Map (NodeHash, Pattern, Set NodeType) QueryResult)
-
-type HasFloodNodesMemo r = HasField "floodNodes" r FloodNodesMemo
-
-getFloodNodesMemo :: HasFloodNodesMemo r => r -> FloodNodesMemo
-getFloodNodesMemo = hLookupByLabel (Label :: Label "floodNodes")
-
-floodNodes ::
-  HasFloodNodesMemo r =>
-  Database ->
-  Int ->
-  NodeHash ->
-  Pattern ->
-  Set NodeType ->
-  Memoize r QueryResult
-floodNodes _database _limit _source _pattern _types = error "not implemented"
-
-type FilterNodesMemo = TVar (Map Pattern QueryResult)
+type FilterNodesMemo = TVar (Map FilterParams QueryResult)
 
 type HasFilterNodesMemo r = HasField "filterNodes" r FilterNodesMemo
 
@@ -234,26 +232,104 @@ getFilterNodesMemo = hLookupByLabel (Label :: Label "filterNodes")
 filterNodes ::
   HasFilterNodesMemo r =>
   Database ->
-  Int64 ->
-  Pattern ->
+  FilterParams ->
   Memoize r QueryResult
-filterNodes database limit = memoize "filterNodes" getFilterNodesMemo $ \pattern -> do
-  SQLInteger total <-
-    liftIO $
-      Sqlite.executeSqlScalar
-        database
-        ["SELECT COUNT(hash) FROM node WHERE data LIKE ?"]
-        [SQLText pattern]
-  records <-
-    liftIO $
-      Sqlite.executeSql
-        database
-        ["SELECT hash, data, type FROM node WHERE data LIKE ? LIMIT ?;"]
-        [SQLText pattern, SQLInteger limit]
-  pure . QueryResult (fromIntegral total) $
-    Map.fromList $
-      records <&> \[SQLText hash, SQLText nodeData, SQLText nodeType] ->
-        (hash, Node nodeData nodeType)
+filterNodes database = memoize "filterNodes" getFilterNodesMemo $ \FilterParams {..} -> case filterOrigin of
+  Just origin -> do
+    let bfs :: MonadIO m => Seq Int64 -> StateT (Set Int64) m [(NodeHash, Node)]
+        bfs = \case
+          Empty -> pure []
+          idx :<| queue -> do
+            visited <- gets $ Set.member idx
+            if visited
+              then bfs queue
+              else do
+                modify $ Set.insert idx
+
+                (nodeHash, nodeData, nodeType, contextData) <-
+                  liftIO $
+                    Sqlite.executeSql
+                      database
+                      [ "SELECT hash, data, type, context_data",
+                        "FROM node LEFT JOIN context",
+                        "ON node.context_key = context.context_key",
+                        "WHERE idx = ?;"
+                      ]
+                      [SQLInteger idx]
+                      <&> \case
+                        [[SQLText h, SQLText d, SQLText t, SQLText c]] -> (h, d, t, c)
+                        [[SQLText h, SQLText d, SQLText t, SQLNull]] -> (h, d, t, "")
+                        _ -> error "sql pattern match unexpectedly failed"
+
+                edges <-
+                  liftIO $
+                    Sqlite.executeSql
+                      database
+                      [ withFilteredNodes "",
+                        "SELECT source, target FROM (",
+                        "    filtered_node JOIN edge",
+                        "    ON filtered_node.idx = edge.source AND edge.target = ?",
+                        "    OR filtered_node.idx = edge.target AND edge.source = ?",
+                        ") LIMIT ?;"
+                      ]
+                      [SQLText filterPattern, SQLInteger idx, SQLInteger idx, SQLInteger filterLimit]
+                      <&> map (\[SQLInteger s, SQLInteger t] -> (s, t))
+
+                let neighbours = map fst edges <> map snd edges
+
+                visitedCount <- fromIntegral <$> gets Set.size
+                nodeData <- pure $ nodeData <> "\n" <> contextData
+                ((nodeHash, Node {..}) :)
+                  <$> if visitedCount < filterLimit
+                    then bfs (queue <> Seq.fromList neighbours)
+                    else pure []
+
+    queue <-
+      liftIO $
+        Sqlite.executeSqlScalar
+          database
+          ["SELECT idx FROM node WHERE hash = ?;"]
+          [SQLText origin]
+          <&> (\(SQLInteger i) -> Seq.singleton i)
+
+    resultNodes <- Map.fromList <$> evalStateT (bfs queue) Set.empty
+    let resultTotalNodes = fromIntegral $ Map.size resultNodes
+    pure QueryResult {..}
+  Nothing -> do
+    SQLInteger total <-
+      liftIO $
+        Sqlite.executeSqlScalar
+          database
+          [ withFilteredNodes "",
+            "SELECT COUNT(hash) FROM filtered_node;"
+          ]
+          [SQLText filterPattern]
+
+    records <-
+      liftIO $
+        Sqlite.executeSql
+          database
+          [ withFilteredNodes "LIMIT ?",
+            "SELECT hash, conjoined_data, type FROM filtered_node;"
+          ]
+          [SQLText filterPattern, SQLInteger filterLimit]
+
+    pure . QueryResult total $
+      Map.fromList $
+        records <&> \[SQLText hash, SQLText nodeData, SQLText nodeType] ->
+          (hash, Node nodeData nodeType)
+  where
+    withFilteredNodes limit =
+      Text.unlines
+        [ "WITH filtered_node(idx, hash, conjoined_data, type) AS (",
+          "    SELECT idx, hash, data || CHAR(10) ||",
+          "    REPLACE(COALESCE(context_data, ''), CHAR(10), ' ')",
+          "    AS conjoined_data, type",
+          "    FROM node LEFT JOIN context ON node.context_key = context.context_key",
+          "    WHERE conjoined_data LIKE ?",
+          limit,
+          ")"
+        ]
 
 type GetNeighboursMemo = TVar (Map NodeHash [NodeHash])
 

@@ -257,9 +257,10 @@ logCommand command args = putStrLn $ "\x1b[1;37m" <> command <> " " <> unwords a
 getBazelWorkspace :: IO FilePath
 getBazelWorkspace = do
   bazel <- getBazelPath
-  workspace <- lines <$> readProcess bazel ["info", "workspace"] "" <&> \case
-    workspace : _ -> workspace
-    _ -> error "failed to get workspace"
+  workspace <-
+    lines <$> readProcess bazel ["info", "workspace"] "" <&> \case
+      workspace : _ -> workspace
+      _ -> error "failed to get workspace"
   setEnv "SKYSCOPE_WORKSPACE" workspace
   setEnv "SKYSCOPE_OUTPUT_BASE" =<< getBazelOutputBase
   pure workspace

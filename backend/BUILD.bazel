@@ -62,7 +62,7 @@ haskell_binary(
         #"-Werror",
         "-Wno-name-shadowing",
         "-fno-omit-yields",
-        "-fobject-code",
+        #"-fobject-code",
         "-threaded",
     ],
     visibility = ["//visibility:public"],
