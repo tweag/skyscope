@@ -8,7 +8,7 @@ import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Argonaut (jsonEmptyObject) as Argonaut
 import Data.Argonaut.Core (Json)
-import Data.Argonaut.Core (fromArray, fromString, isNull, toArray, toObject, toString) as Argonaut
+import Data.Argonaut.Core (fromObject, fromArray, fromString, isNull, jsonNull, toArray, toObject, toString, fromNumber) as Argonaut
 import Data.Argonaut.Decode (decodeJson) as Argonaut
 import Data.Argonaut.Decode.Class (class DecodeJson)
 import Data.Argonaut.Decode.Error (JsonDecodeError(..)) as Argonaut
@@ -577,8 +577,12 @@ createSearchBox nodeConfiguration = do
     if Just pattern == previous then error "pattern unchanged" else do
       url <- liftEffect $ getImportId <#> (_ <> "/filter")
       result <- Affjax.post Affjax.ResponseFormat.json url
-        $ Just $ Affjax.RequestBody.json $ Argonaut.fromString
-        $ "%" <> pattern <> "%"
+        $ Just $ Affjax.RequestBody.json $
+          Argonaut.fromObject $ Object.fromFoldable
+            [ "filterPattern" /\ Argonaut.fromString ("%" <> pattern <> "%")
+            , "filterOrigin" /\ Argonaut.jsonNull
+            , "filterLimit" /\ Argonaut.fromNumber 256.0
+            ]
       case result of
         Left err -> error $ Affjax.printError err
         Right response -> pure $ response.body /\ pattern
@@ -621,8 +625,9 @@ createSearchBox nodeConfiguration = do
         showAllListener <- EventTarget.eventListener $ const $ do
           let count = show $ Object.size results.resultNodes
               message = "Make all " <> count <> " matching nodes visible?"
-          HTML.window >>= Window.confirm message >>= not >>> if _ then pure unit else do
-            for_ (Object.keys results.resultNodes) (flip nodeConfiguration.show Collapsed)
+          HTML.window >>= Window.confirm message >>= not >>> if _ then pure unit
+            else launchAff $ nodeConfiguration.atomically $ liftEffect $ Nothing <$ do
+              for_ (Object.keys results.resultNodes) (flip nodeConfiguration.show Collapsed)
           collapseSearch
         EventTarget.addEventListener EventTypes.dblclick showAllListener false $ Element.toEventTarget row
         let formattedNodeType = formatNodeType node.nodeType

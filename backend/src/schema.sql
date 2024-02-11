@@ -3,9 +3,12 @@ CREATE TABLE IF NOT EXISTS node (
   hash TEXT,
   data TEXT,
   type TEXT,
+  context_key TEXT,
   PRIMARY KEY (idx) ON CONFLICT IGNORE,
   UNIQUE (hash) ON CONFLICT IGNORE
 );
+
+CREATE INDEX IF NOT EXISTS context_key_index ON node (context_key);
 
 CREATE TABLE IF NOT EXISTS edge (
   source INTEGER,

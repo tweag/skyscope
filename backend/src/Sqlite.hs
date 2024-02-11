@@ -8,6 +8,7 @@ module Sqlite
     Conflict (..),
     executeSql,
     executeSqlScalar,
+    executeStatement,
     executeStatements,
     batchInsert,
     batchInsertInternal,
@@ -74,6 +75,9 @@ executeSqlScalar :: Database -> [Text] -> [SQLData] -> IO SQLData
 executeSqlScalar database sql params = do
   [[result]] <- executeSql database sql params
   pure result
+
+executeStatement :: [Text] -> Database -> IO ()
+executeStatement statement database = executeStatements database [statement]
 
 executeStatements :: Database -> [[Text]] -> IO ()
 executeStatements database statements = for_ statements $ flip (executeSql database) []
