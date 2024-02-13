@@ -8,6 +8,7 @@
   , "argonaut-core"
   , "arrays"
   , "avar"
+  , "bifunctors"
   , "console"
   , "datetime"
   , "effect"
