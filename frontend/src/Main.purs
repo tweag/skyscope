@@ -8,20 +8,22 @@ import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Argonaut (jsonEmptyObject) as Argonaut
 import Data.Argonaut.Core (Json)
-import Data.Argonaut.Core (fromObject, fromArray, fromString, isNull, jsonNull, toArray, toObject, toString, fromNumber) as Argonaut
+import Data.Argonaut.Core (fromArray, fromNumber, fromObject, fromString, isNull, toArray, toObject, toString) as Argonaut
 import Data.Argonaut.Decode (decodeJson) as Argonaut
 import Data.Argonaut.Decode.Class (class DecodeJson)
 import Data.Argonaut.Decode.Error (JsonDecodeError(..)) as Argonaut
 import Data.Argonaut.Encode (encodeJson) as Argonaut
 import Data.Argonaut.Encode.Class (class EncodeJson)
+import Data.Array ((:))
 import Data.Array as Array
 import Data.Array.NonEmpty as Array.NonEmpty
+import Data.Bifunctor (bimap, lmap, rmap)
 import Data.DateTime as DateTime
 import Data.DateTime.Instant as Instant
 import Data.Either (Either(..), fromRight)
-import Data.Foldable (foldMap, foldl, for_, sequence_, traverse_)
+import Data.Foldable (foldMap, foldl, for_, sequence_, traverse_, or)
 import Data.Formatter.Number (formatNumber)
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Number as Number
 import Data.Show as Show
 import Data.String (replaceAll, split, toLower, toUpper)
@@ -32,7 +34,7 @@ import Data.String.Regex.Flags (global, ignoreCase, noFlags) as Regex
 import Data.String.Regex.Unsafe (unsafeRegex) as Regex
 import Data.Time.Duration (Milliseconds(..))
 import Data.Traversable (sequence, traverse)
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), fst, snd)
 import Data.Tuple.Nested ((/\), type (/\))
 import Effect (Effect)
 import Effect.AVar as Effect.AVar
@@ -44,6 +46,7 @@ import Effect.Console as Console
 import Effect.Exception (Error)
 import Effect.Exception as Exception
 import Effect.Now (now)
+import Effect.Ref (Ref)
 import Effect.Ref as Ref
 import Effect.Timer as Timer
 import Foreign.Object (Object)
@@ -60,7 +63,8 @@ import Web.DOM.Element as Element
 import Web.DOM.HTMLCollection as HTMLCollection
 import Web.DOM.Node as Node
 import Web.DOM.NonElementParentNode as NonElementParentNode
-import Web.Event.Event (Event, EventType)
+import Web.Event.Event (Event, EventType(..))
+import Web.Event.Event as Event
 import Web.Event.EventTarget as EventTarget
 import Web.HTML as HTML
 import Web.HTML.Event.EventTypes (change, click, focus, input, load) as EventTypes
@@ -73,7 +77,7 @@ import Web.UIEvent.KeyboardEvent as KeyboardEvent
 import Web.UIEvent.KeyboardEvent.EventTypes (keydown, keyup) as EventTypes
 import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as MouseEvent
-import Web.UIEvent.MouseEvent.EventTypes (dblclick, mouseenter, mouseleave, mousemove) as EventTypes
+import Web.UIEvent.MouseEvent.EventTypes (mouseenter, mouseleave, mousemove) as EventTypes
 
 main :: Effect Unit
 main = do
@@ -90,13 +94,14 @@ load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
     restore nodeConfiguration
     let body = HTMLElement.toElement bodyElement
     graph <- createElement "div" "Graph" $ Just body
-    nodeClickHandler <- makeTools graph nodeConfiguration
+    initiateSearch <- Ref.new $ const $ pure unit
+    nodeClickHandler <- makeTools graph nodeConfiguration initiateSearch
     renderState <- attachGraphRenderer graph nodeConfiguration nodeClickHandler
-    searchBox /\ focusInput <- createSearchBox nodeConfiguration
-    appendElement searchBox body
+    searchBox <- createSearchBox nodeConfiguration initiateSearch
     tray <- createTray nodeConfiguration renderState
+    appendElement searchBox body
     appendElement tray body
-    focusInput
+    join $ Ref.read initiateSearch <*> pure Nothing
 
 restore :: NodeConfiguration -> Effect Unit
 restore nodeConfiguration = do
@@ -107,6 +112,11 @@ restore nodeConfiguration = do
 type NodeHash = String
 
 data NodeState = Collapsed | Expanded
+
+instance eqNodeState :: Eq NodeState where
+  eq Collapsed Collapsed = true
+  eq Expanded Expanded = true
+  eq _ _ = false
 
 instance decodeJsonNodeState :: DecodeJson NodeState where
   decodeJson json = case Argonaut.toString json of
@@ -126,20 +136,22 @@ type NodeConfiguration =
   , atomically :: Aff (Maybe NodeHash) -> Aff Unit
   , show :: NodeHash -> NodeState -> Effect Unit
   , hide :: NodeHash -> Effect Unit
+  , preview :: Array NodeHash -> Effect Unit
   , visible :: Effect (Array NodeHash)
   , set :: Json -> Effect Unit
-  , get :: Effect Json
+  , get :: Effect (Json /\ Maybe Json)
   }
 
 makeNodeConfiguration :: Effect NodeConfiguration
 makeNodeConfiguration = do
   atomicSemaphore <- Ref.new 0
-  nodeStates <- Ref.new Object.empty
+  lastPreviewing <- Ref.new Nothing
+  nodeStates <- Ref.new $ Object.empty /\ Nothing
   channel <- Signal.channel Nothing
   let notify = Signal.send channel
       modify changed f
         = launchAff $ atomically $ liftEffect
-        $ changed <$ Ref.modify_ f nodeStates
+        $ changed <$ Ref.modify_ (lmap f) nodeStates
 
       onChange action = Signal.runSignal $ action <$> Signal.subscribe channel
 
@@ -149,25 +161,47 @@ makeNodeConfiguration = do
         \reentrancyCount -> do
           changed <- action
           liftEffect do
-            historyState <- Tuple changed <$> Ref.read nodeStates
-            when (reentrancyCount == 1) do
+            historyState /\ previewing <- bimap (Tuple changed) isJust <$> Ref.read nodeStates
+            when (reentrancyCount == 1 && not previewing) do
               pushHistory $ Argonaut.encodeJson historyState
             notify changed
 
       show hash state = modify (Just hash) (Object.insert hash state)
+
       hide hash = modify (Just hash) (Object.delete hash)
-      visible = Object.keys <$> Ref.read nodeStates
+
+      visible = Ref.read nodeStates <#> case _ of
+        baseConfig /\ Nothing -> Object.keys baseConfig
+        _ /\ Just previewConfig -> Object.keys previewConfig
 
       set json = case Argonaut.decodeJson json of
-        Right s -> Ref.write s nodeStates *> notify Nothing
+        Right s -> Ref.write (s /\ Nothing) nodeStates *> notify Nothing
         Left err -> error $ Show.show err
-      get = Argonaut.encodeJson <$> Ref.read nodeStates
+
+      get = bimap Argonaut.encodeJson (map Argonaut.encodeJson) <$> Ref.read nodeStates
+
+      preview hashes = do
+        Console.log "preview A"
+        changed <- Ref.read lastPreviewing
+        previewConfig <- snd <$> Ref.read nodeStates
+        let changed' /\ previewConfig' = case Array.uncons hashes of
+              Just { head } -> Just head /\ Just (Object.fromFoldable $ hashes <#> (_ /\ Collapsed) )
+              Nothing -> changed /\ Nothing
+        Console.log "preview B"
+        if previewConfig == previewConfig' then pure unit else do
+          Console.log "preview C"
+          Ref.modify_ (rmap $ const previewConfig') nodeStates
+          case Array.uncons hashes of
+            Just { head } -> Ref.write (Just head) lastPreviewing
+            Nothing -> pure unit
+          notify changed'
+          Console.log "preview D"
 
   onPopHistory $ Argonaut.decodeJson >>> case _ of
     Left err -> error $ "failed to decode history: " <> Show.show err
-    Right (changed /\ state) -> Ref.write state nodeStates *> notify changed
+    Right (changed /\ state) -> Ref.write (state /\ Nothing) nodeStates *> notify changed
 
-  pure { onChange, show, hide, atomically, visible, set, get }
+  pure { onChange, show, hide, atomically, visible, set, get, preview }
 
 data Click
   = NodeClick Element
@@ -175,8 +209,10 @@ data Click
 
 type ClickHandler = Click -> MouseEvent -> Effect Boolean
 
-makeTools :: Element -> NodeConfiguration -> Effect ClickHandler
-makeTools graph nodeConfiguration = do
+type InitiateSearch = Maybe NodeHash -> Effect Unit
+
+makeTools :: Element -> NodeConfiguration -> Ref InitiateSearch -> Effect ClickHandler
+makeTools graph nodeConfiguration initiateSearch = do
   clickHandlers <- sequence
     [ makeOpenAllPaths
     , makeOpenPath
@@ -206,7 +242,8 @@ makeTools graph nodeConfiguration = do
               Timer.clearTimeout timeoutId
               Ref.write Nothing clicking
               when (hash == firstHash) do
-                launchAff $ showNeighbours node
+                Event.stopPropagation $ MouseEvent.toEvent event
+                join $ Ref.read initiateSearch <*> pure (Just hash)
             Nothing -> do
               if MouseEvent.ctrlKey || MouseEvent.altKey $ event
                 then nodeConfiguration.hide hash
@@ -220,20 +257,6 @@ makeTools graph nodeConfiguration = do
                       Ref.write (Just $ hash /\ timeoutId) clicking
                     else nodeConfiguration.show hash Collapsed
         _ -> pure false
-
-    showNeighbours :: Element -> Aff Unit
-    showNeighbours node = do
-      nodeHash <- liftEffect $ Element.id node
-      url <- liftEffect $ getImportId <#> (_ <> "/neighbours")
-      result <- Affjax.post Affjax.ResponseFormat.json url
-        $ Just $ Affjax.RequestBody.json $ Argonaut.fromString nodeHash
-      case result of
-        Right response -> case join $ Argonaut.toArray response.body <#> traverse Argonaut.toString of
-          Just neighbours -> nodeConfiguration.atomically $ liftEffect $ Just nodeHash <$ do
-            for_ neighbours $ flip nodeConfiguration.show Collapsed
-            nodeConfiguration.show nodeHash Expanded
-          Nothing -> error "unexpected neighbours results json"
-        Left err -> error $ Affjax.printError err
 
     makeOpenAllPaths :: Effect ClickHandler
     makeOpenAllPaths = do
@@ -383,9 +406,13 @@ attachGraphRenderer graph nodeConfiguration onClick = do
   where
     makeRenderer :: Effect (Aff (Either StatusCode Element))
     makeRenderer = makeThrottledAction do
+      let pickConfig = case _ of
+            baseConfig /\ Nothing -> baseConfig
+            _ /\ Just (previewConfig) -> previewConfig
       url <- liftEffect $ getImportId <#> (_ <> "/render")
       result <- Affjax.post Affjax.ResponseFormat.document url
-        <<< Just <<< Affjax.RequestBody.json =<< liftEffect nodeConfiguration.get
+        <<< Just <<< Affjax.RequestBody.json <<< pickConfig
+        =<< liftEffect nodeConfiguration.get
       liftEffect $ case result of
         Left err -> error $ Affjax.printError err
         Right response -> case response.status of
@@ -416,7 +443,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
               Just nodeData -> do
                 let label = join $ Regex.match labelRegex nodeData <#> Array.NonEmpty.head
                     labelRegex = Regex.unsafeRegex "(@[.-\\w]+)?//(/?[^/:,}\\]]+)*(:[^/,}\\]]+(/[^/,}\\]]+)*)?" Regex.noFlags
-                addClass background "Selectable"
+                addClass background "Selectable"  -- FIXME: regex seems not to be matching BZL_LOAD nodeData
                 case text of
                   Just { title, detail } -> do
                     let setDetail content = do
@@ -555,8 +582,8 @@ type NodeFields =
   , nodeContext :: String
   }
 
-createSearchBox :: NodeConfiguration -> Effect (Element /\ Effect Unit)
-createSearchBox nodeConfiguration = do
+createSearchBox :: NodeConfiguration -> Ref InitiateSearch -> Effect Element
+createSearchBox nodeConfiguration initiateSearch = do
   overlay <- createElement "div" "SearchBoxOverlay" Nothing
   searchBox <- createElement "div" "SearchBox" $ Just overlay
   searchBar <- createElement "div" "SearchBar" $ Just searchBox
@@ -568,7 +595,10 @@ createSearchBox nodeConfiguration = do
   Element.setAttribute "placeholder" placeholder patternInput
   Element.setAttribute "title" title patternInput
   previousPattern <- Ref.new Nothing
+  searchOrigin <- Ref.new Nothing
   filterNodes <- makeThrottledAction do
+    origin <- liftEffect $ Ref.read searchOrigin
+    let limit = if isJust origin then 16.0 else 64.0
     pattern <- liftEffect $ map (fromMaybe "")
       $ traverse HTMLInputElement.value
       $ HTMLInputElement.fromElement patternInput
@@ -580,8 +610,8 @@ createSearchBox nodeConfiguration = do
         $ Just $ Affjax.RequestBody.json $
           Argonaut.fromObject $ Object.fromFoldable
             [ "filterPattern" /\ Argonaut.fromString ("%" <> pattern <> "%")
-            , "filterOrigin" /\ Argonaut.jsonNull
-            , "filterLimit" /\ Argonaut.fromNumber 256.0
+            , "filterOrigin" /\ Argonaut.encodeJson origin
+            , "filterLimit" /\ Argonaut.fromNumber limit
             ]
       case result of
         Left err -> error $ Affjax.printError err
@@ -595,8 +625,12 @@ createSearchBox nodeConfiguration = do
 
   searchResults <- createElement "div" "SearchResults" $ Just searchBox
 
+--  let clearPreviewClass :: Effect Unit
+--      clearPreviewClass = flip traverse "Previewing" =<< getElementsByClassName "node" undefined
+
   let collapseSearch :: Effect Unit
       collapseSearch = do
+        Console.log "collapseSearch"
         removeAllChildren searchResults
         updateNodeCount "" =<< Ref.read nodeCountMaxRef
         Node.setNodeValue "" $ Element.toNode patternInput
@@ -604,14 +638,18 @@ createSearchBox nodeConfiguration = do
         traverse_ HTMLElement.blur (HTMLElement.fromElement patternInput)
         Ref.write Nothing previousPattern
         removeClass searchBox "Expanded"
+        Ref.write Nothing searchOrigin
+        nodeConfiguration.preview []
 
   let renderResults :: NodeResults -> String -> Effect Unit
       renderResults results pattern = do
         removeAllChildren searchResults
-        sequence_ $ Object.toArrayWithKey (renderResultRow pattern results) results.resultNodes
+        Ref.read searchOrigin >>= case _ of
+          Nothing -> sequence_ $ Object.toArrayWithKey (renderResultRow pattern) results.resultNodes
+          Just origin -> nodeConfiguration.preview $ origin : Array.filter (_ /= origin) (Object.keys results.resultNodes)
 
-      renderResultRow :: String -> NodeResults -> NodeHash -> { nodeData :: String, nodeType :: String } -> Effect Unit
-      renderResultRow pattern results hash node = do
+      renderResultRow :: String -> NodeHash -> { nodeData :: String, nodeType :: String } -> Effect Unit
+      renderResultRow pattern hash node = do
         row <- createElement "div" "" $ Just searchResults
         let updateSelected = visible >>= if _
               then removeClass row "Selected"
@@ -622,14 +660,6 @@ createSearchBox nodeConfiguration = do
             visible = Array.notElem hash <$> nodeConfiguration.visible
         toggleListener <- EventTarget.eventListener $ const toggleSelected
         EventTarget.addEventListener EventTypes.click toggleListener false $ Element.toEventTarget row
-        showAllListener <- EventTarget.eventListener $ const $ do
-          let count = show $ Object.size results.resultNodes
-              message = "Make all " <> count <> " matching nodes visible?"
-          HTML.window >>= Window.confirm message >>= not >>> if _ then pure unit
-            else launchAff $ nodeConfiguration.atomically $ liftEffect $ Nothing <$ do
-              for_ (Object.keys results.resultNodes) (flip nodeConfiguration.show Collapsed)
-          collapseSearch
-        EventTarget.addEventListener EventTypes.dblclick showAllListener false $ Element.toEventTarget row
         let formattedNodeType = formatNodeType node.nodeType
         addClass row formattedNodeType
         addClass row "ResultRow"
@@ -638,19 +668,22 @@ createSearchBox nodeConfiguration = do
         typeSpan <- createElement "span" "" $ Just row
         setTextContent formattedNodeType typeSpan
         addClass typeSpan "NodeTitle"
-        renderPatternMatch row pattern node.nodeData
+        renderPatternMatch row pattern $ replaceAll (Pattern "\n") (Replacement " ") node.nodeData
 
       renderPatternMatch :: Element -> String -> String -> Effect Unit
       renderPatternMatch row pattern nodeData =
-        let regex = split (Pattern "%") pattern
-                  # foldl (\fullRegex piece ->
-                      let p /\ r = Pattern "_" /\ Replacement "."
-                          pieceRegex = replaceAll p r $ escapeRegex piece
-                      in fullRegex <> "(" <> pieceRegex <> ")(.*)") "(.*)"
-                  # flip Regex.unsafeRegex Regex.ignoreCase
+        let regexStr = split (Pattern "%") pattern
+                     # foldl (\fullRegex piece ->
+                         let p /\ r = Pattern "_" /\ Replacement ".?"
+                             pieceRegex = replaceAll p r $ escapeRegex piece
+                         in fullRegex <> "(" <> pieceRegex <> ")(.*)") "(.*)"
+            regex = regexStr # flip Regex.unsafeRegex Regex.ignoreCase
             escapeRegex = Regex.replace (Regex.unsafeRegex
               "[.*+?^${}()|[\\]\\\\]" Regex.global) "\\$&"
-        in case Regex.match regex nodeData <#> Array.NonEmpty.drop 1 of
+        in do
+          --Console.log $ "regexStr: " <> regexStr
+          --Console.log $ "nodeData: " <> nodeData
+          case Regex.match regex nodeData <#> Array.NonEmpty.drop 1 of
             Nothing -> error "nodeData did not match regex"
             Just matches ->
               let matchCount = Array.length matches
@@ -672,18 +705,22 @@ createSearchBox nodeConfiguration = do
   resetSearchBoxFade <- Ref.new Nothing <#> \fadeTimeoutId -> do
     traverse_ Timer.clearTimeout =<< Ref.read fadeTimeoutId
     removeClass searchBox "Fade"
-    nodeConfiguration.visible >>= case _ of
-      [] -> Ref.write Nothing fadeTimeoutId
-      _ -> do
-        delay <- Ref.read mouseOverSearchBox <#> if _ then 10000 else 100
-        timeoutId <- Timer.setTimeout delay $ addClass searchBox "Fade"
-        Ref.write (Just timeoutId) fadeTimeoutId
+    disableFade <- or <$> sequence
+      [ isJust <$> Ref.read searchOrigin
+      , Array.null <$> nodeConfiguration.visible
+      ]
+    if disableFade then Ref.write Nothing fadeTimeoutId else do
+      delay <- Ref.read mouseOverSearchBox <#> if _ then 10000 else 100
+      timeoutId <- Timer.setTimeout delay $ addClass searchBox "Fade"
+      Ref.write (Just timeoutId) fadeTimeoutId
 
   onElementEvent searchBox EventTypes.mouseenter $ const $ Ref.write true mouseOverSearchBox *> resetSearchBoxFade
   onElementEvent searchBox EventTypes.mouseleave $ const $ Ref.write false mouseOverSearchBox *> resetSearchBoxFade
   onElementEvent searchBox EventTypes.mousemove $ const resetSearchBoxFade
   onElementEvent searchBox EventTypes.click $ const resetSearchBoxFade
   onScroll searchResults $ resetSearchBoxFade
+
+  resultHashes <- Ref.new []
 
   let updateSearch :: Boolean -> Aff Unit
       updateSearch render = filterNodes >>= \(resultsJson /\ pattern) ->
@@ -693,17 +730,36 @@ createSearchBox nodeConfiguration = do
             let total = results.resultTotalNodes
             void $ Ref.modify (max total) nodeCountMaxRef
             updateNodeCount (if render then "found" else "") total
+            Ref.write (Object.keys $ results.resultNodes) resultHashes
             when render $ renderResults results pattern
   launchAff $ updateSearch false
 
-  let onPatternInputEvent = onElementEvent patternInput
-  for_ [ EventTypes.change, EventTypes.focus, EventTypes.input ] $
-    flip onPatternInputEvent $ const do
-      addClass searchBox "Expanded"
-      launchAff $ updateSearch true
-      resetSearchBoxFade
+  let showAll hashes = do
+        window <- HTML.window
+        let count = show (Array.length hashes)
+            message = "Make all " <> count <> " matching nodes visible?"
+        confirmed <- Window.confirm message window
+        if not confirmed then pure unit else do
+          launchAff $ nodeConfiguration.atomically $ liftEffect $ Nothing <$ do
+            for_ hashes  $ flip nodeConfiguration.show Collapsed
 
-  onKeyUp "Escape" collapseSearch
+  let onPatternInputEvent = onElementEvent patternInput
+  for_ [ EventTypes.change, EventTypes.focus, EventTypes.input, EventTypes.keydown ] $
+    flip onPatternInputEvent \event -> do
+      let EventType et = Event.type_ event
+      Console.log $ "onPatternInputEvent: " <> et
+      if Event.type_ event == EventTypes.keydown
+        then for_ (KeyboardEvent.fromEvent event) \keyboardEvent ->
+          case KeyboardEvent.key keyboardEvent of
+            "Enter" -> collapseSearch *> (showAll =<< Ref.read resultHashes)
+            "Escape" -> collapseSearch
+            _ -> pure unit
+
+        else do
+          Console.log "updateSearch"
+          addClass searchBox "Expanded"
+          launchAff $ updateSearch true
+          resetSearchBoxFade
 
   onDocumentEvent EventTypes.click $ const do
     overSearchBox <- Ref.read mouseOverSearchBox
@@ -712,7 +768,14 @@ createSearchBox nodeConfiguration = do
   let focusPatternInput :: Effect Unit
       focusPatternInput = traverse_ HTMLElement.focus
                         $ HTMLElement.fromElement patternInput
-  pure $ overlay /\ (resetSearchBoxFade *> focusPatternInput)
+
+  flip Ref.write initiateSearch \hash -> do
+    Console.log("initiateSearch: " <> show hash)
+    Ref.write hash searchOrigin
+    resetSearchBoxFade
+    focusPatternInput
+
+  pure overlay
 
 type NodeResults =
   { resultTotalNodes :: Number
@@ -793,7 +856,7 @@ createTray nodeConfiguration renderState = do
           when (MouseEvent.button mouseEvent == 0) do
             Location.reload =<< Window.location =<< HTML.window
       EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget icon
-      whenStarting $ flip Ref.write checkpointCandidate =<< nodeConfiguration.get
+      whenStarting $ flip Ref.write checkpointCandidate <<< fst =<< nodeConfiguration.get
 
     RenderDone (Milliseconds elapsed) -> whenQuiescent $ replaceDiv "RenderDone" \div -> do
       status <- createElement "span" "Status" $ Just div

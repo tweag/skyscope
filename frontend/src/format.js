@@ -11,13 +11,13 @@ const title = function () {
         case "TransitiveTarget":
         case "TargetCompletion":
             match = node.context.match("(?<=\n)\\w+(?=\\(\n)");
-            if (match != null) {
+            if (match) {
                 return truncate(match[0], 25);
             }
             break;
         case "ActionExecution":
             match = node.context.match("(?<=Mnemonic: )\\w+");
-            if (match != null) {
+            if (match) {
                 return truncate(match[0], 25);
             }
             break;
@@ -34,17 +34,16 @@ const detail = function () {
         case "FileState":
         case "WorkspaceFile":
             match = node.data.match(/.*\[([^\]]*)\]\/\[([^\]]*)\]/);
-            if (match != null) {
+            if (match) {
                 return match[1] + "/" + match[2];
             }
             break;
         case "Artifact":
             match = node.data.match(/\[.*\]([^\[\]]+)/);
-            if (match != null) {
+            if (match) {
                 return match[1];
             }
             break;
-        case "BzlLoad":
         case "ActionEnvironmentVariable":
         case "ClientEnvironmentVariable":
         case "ContainingPackageLookup":
@@ -54,26 +53,26 @@ const detail = function () {
         case "Precomputed":
         case "RepositoryDirectory":
             match = node.data.match(/:(.*)/);
-            if (match != null) {
+            if (match) {
                 return match[1];
             }
             break;
         case "Glob":
             match = node.data.match(/subdir=(.*) pattern=(.+) globberOperation/);
-            if (match != null) {
+            if (match) {
                 return match[1] + (match[1].length > 0 ? "/" : "") + match[2];
             }
             break;
+        case "BzlLoad":
+        case "ToolchainResolution":
         case "SingleToolchainResolution":
-            match = node.data.match(/toolchainTypeLabel=(.+), targetPlatformKey/);
-            if (match != null) {
-                return match[1];
+            if (node.label) {
+                return node.label;
             }
-            break;
         case "BuildConfiguration":
-            console.log(`BuildConfiguration: ${node.data}`);
+        case "RegisteredToolchains":
             match = node.data.match(/BuildConfigurationKey\[([0-9a-f]{64})\]/);
-            if (match != null) {
+            if (match) {
                 return match[1].slice(0, 16);
             }
             break;
