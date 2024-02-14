@@ -6,6 +6,7 @@ import Affjax.StatusCode (StatusCode(..))
 import Affjax.Web as Affjax
 import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
+import Control.Monad.State.Trans (StateT, evalStateT, get, put)
 import Data.Argonaut (jsonEmptyObject) as Argonaut
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Core (fromArray, fromNumber, fromObject, fromString, isNull, toArray, toObject, toString) as Argonaut
@@ -21,7 +22,7 @@ import Data.Bifunctor (bimap, lmap, rmap)
 import Data.DateTime as DateTime
 import Data.DateTime.Instant as Instant
 import Data.Either (Either(..), fromRight)
-import Data.Foldable (foldMap, foldl, for_, sequence_, traverse_, or)
+import Data.Foldable (foldMap, for_, or, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
 import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Number as Number
@@ -29,7 +30,7 @@ import Data.Show as Show
 import Data.String (replaceAll, split, toLower, toUpper)
 import Data.String.CodeUnits as String
 import Data.String.Pattern (Pattern(..), Replacement(..))
-import Data.String.Regex (match, replace, split) as Regex
+import Data.String.Regex (match, replace, search, split) as Regex
 import Data.String.Regex.Flags (global, ignoreCase, noFlags) as Regex
 import Data.String.Regex.Unsafe (unsafeRegex) as Regex
 import Data.Time.Duration (Milliseconds(..))
@@ -63,7 +64,7 @@ import Web.DOM.Element as Element
 import Web.DOM.HTMLCollection as HTMLCollection
 import Web.DOM.Node as Node
 import Web.DOM.NonElementParentNode as NonElementParentNode
-import Web.Event.Event (Event, EventType(..))
+import Web.Event.Event (Event, EventType)
 import Web.Event.Event as Event
 import Web.Event.EventTarget as EventTarget
 import Web.HTML as HTML
@@ -181,21 +182,17 @@ makeNodeConfiguration = do
       get = bimap Argonaut.encodeJson (map Argonaut.encodeJson) <$> Ref.read nodeStates
 
       preview hashes = do
-        Console.log "preview A"
         changed <- Ref.read lastPreviewing
         previewConfig <- snd <$> Ref.read nodeStates
         let changed' /\ previewConfig' = case Array.uncons hashes of
               Just { head } -> Just head /\ Just (Object.fromFoldable $ hashes <#> (_ /\ Collapsed) )
               Nothing -> changed /\ Nothing
-        Console.log "preview B"
         if previewConfig == previewConfig' then pure unit else do
-          Console.log "preview C"
           Ref.modify_ (rmap $ const previewConfig') nodeStates
           case Array.uncons hashes of
             Just { head } -> Ref.write (Just head) lastPreviewing
             Nothing -> pure unit
           notify changed'
-          Console.log "preview D"
 
   onPopHistory $ Argonaut.decodeJson >>> case _ of
     Left err -> error $ "failed to decode history: " <> Show.show err
@@ -443,7 +440,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
               Just nodeData -> do
                 let label = join $ Regex.match labelRegex nodeData <#> Array.NonEmpty.head
                     labelRegex = Regex.unsafeRegex "(@[.-\\w]+)?//(/?[^/:,}\\]]+)*(:[^/,}\\]]+(/[^/,}\\]]+)*)?" Regex.noFlags
-                addClass background "Selectable"  -- FIXME: regex seems not to be matching BZL_LOAD nodeData
+                addClass background "Selectable"
                 case text of
                   Just { title, detail } -> do
                     let setDetail content = do
@@ -630,7 +627,6 @@ createSearchBox nodeConfiguration initiateSearch = do
 
   let collapseSearch :: Effect Unit
       collapseSearch = do
-        Console.log "collapseSearch"
         removeAllChildren searchResults
         updateNodeCount "" =<< Ref.read nodeCountMaxRef
         Node.setNodeValue "" $ Element.toNode patternInput
@@ -671,35 +667,47 @@ createSearchBox nodeConfiguration initiateSearch = do
         renderPatternMatch row pattern $ replaceAll (Pattern "\n") (Replacement " ") node.nodeData
 
       renderPatternMatch :: Element -> String -> String -> Effect Unit
-      renderPatternMatch row pattern nodeData =
-        let regexStr = split (Pattern "%") pattern
-                     # foldl (\fullRegex piece ->
-                         let p /\ r = Pattern "_" /\ Replacement ".?"
-                             pieceRegex = replaceAll p r $ escapeRegex piece
-                         in fullRegex <> "(" <> pieceRegex <> ")(.*)") "(.*)"
-            regex = regexStr # flip Regex.unsafeRegex Regex.ignoreCase
-            escapeRegex = Regex.replace (Regex.unsafeRegex
-              "[.*+?^${}()|[\\]\\\\]" Regex.global) "\\$&"
-        in do
-          --Console.log $ "regexStr: " <> regexStr
-          --Console.log $ "nodeData: " <> nodeData
-          case Regex.match regex nodeData <#> Array.NonEmpty.drop 1 of
-            Nothing -> error "nodeData did not match regex"
-            Just matches ->
-              let matchCount = Array.length matches
-                  indices = Array.range 0 matchCount
-              in for_ (indices `Array.zip` matches) \(groupIndex /\ group) -> do
-                  span <- createElement "span" "" $ Just row
-                  addClass span $ if groupIndex `mod` 2 == 0 then "Context" else "Highlight"
-                  let content = fromMaybe "" group
-                  if groupIndex > 0
-                    then setTextContent content span
-                    else
-                      let startIndex = min
-                            (max 0 (String.length content - 16))  -- Always show the last 16 chars of the first group,
-                            (2 * max 0 (String.length nodeData - 180))  -- but show more if there is space to do so.
-                          ellipsis = if startIndex == 0 then "" else "…"
-                      in setTextContent (ellipsis <> String.drop startIndex content) span
+      renderPatternMatch row pattern nodeData = do
+        let patternPieces = split (Pattern "%") pattern
+        spanElements <- evalStateT (findMatches nodeData patternPieces) 0
+        for_ spanElements $ flip appendElement row
+
+      findMatches :: String -> Array String -> StateT Int Effect (Array Element)
+      findMatches nodeData patternPieces = do
+        let createSpan cls content = liftEffect $ do
+              span <- createElement "span" "" Nothing
+              setTextContent content span
+              addClass span cls
+              pure span
+        previousEnd <- get
+        let remaining = String.drop previousEnd nodeData
+        case Array.uncons patternPieces of
+          Nothing -> Array.singleton <$> createSpan "Context" remaining
+          Just { head, tail } -> do
+            let p /\ r = Pattern "_" /\ Replacement "."
+                escapeRegex = Regex.replace (Regex.unsafeRegex
+                  "[.*+?^${}()|[\\]\\\\]" Regex.global) "\\$&"
+                pieceRegexStr = replaceAll p r $ escapeRegex head
+                pieceRegex = Regex.unsafeRegex pieceRegexStr Regex.ignoreCase
+                regexSearch = Regex.search pieceRegex remaining <#> (_ + previousEnd)
+                regexMatch = Regex.match pieceRegex remaining
+            case regexSearch /\ regexMatch  of
+                Nothing /\ Nothing -> pure []
+                Just begin /\ Just matches -> do
+                  let contextLenMax = 32
+                      contextLen = begin - previousEnd
+                      takeHalfContext = String.take $ contextLenMax / 2 - 1
+                      context = if contextLen < contextLenMax
+                        then String.take contextLen remaining
+                        else (if previousEnd == 0 then "" else takeHalfContext remaining) <> "…"
+                          <> takeHalfContext (String.drop (contextLen - contextLenMax / 2 + 1) remaining)
+                      highlight = fromMaybe "" $ Array.NonEmpty.head matches
+                  contextSpan <- createSpan "Context" context
+                  highlightSpan <- createSpan "Highlight" highlight
+                  put $ begin + String.length highlight
+                  ([ contextSpan, highlightSpan ] <> _)
+                    <$> findMatches nodeData tail
+                _ -> error "regex inconsistency"
 
   mouseOverSearchBox <- Ref.new false
   resetSearchBoxFade <- Ref.new Nothing <#> \fadeTimeoutId -> do
@@ -745,21 +753,16 @@ createSearchBox nodeConfiguration initiateSearch = do
 
   let onPatternInputEvent = onElementEvent patternInput
   for_ [ EventTypes.change, EventTypes.focus, EventTypes.input, EventTypes.keydown ] $
-    flip onPatternInputEvent \event -> do
-      let EventType et = Event.type_ event
-      Console.log $ "onPatternInputEvent: " <> et
-      if Event.type_ event == EventTypes.keydown
-        then for_ (KeyboardEvent.fromEvent event) \keyboardEvent ->
-          case KeyboardEvent.key keyboardEvent of
-            "Enter" -> collapseSearch *> (showAll =<< Ref.read resultHashes)
-            "Escape" -> collapseSearch
-            _ -> pure unit
-
-        else do
-          Console.log "updateSearch"
-          addClass searchBox "Expanded"
-          launchAff $ updateSearch true
-          resetSearchBoxFade
+    flip onPatternInputEvent \event -> if Event.type_ event == EventTypes.keydown
+      then for_ (KeyboardEvent.fromEvent event) \keyboardEvent ->
+        case KeyboardEvent.key keyboardEvent of
+          "Enter" -> collapseSearch *> (showAll =<< Ref.read resultHashes)
+          "Escape" -> collapseSearch
+          _ -> pure unit
+      else do
+        addClass searchBox "Expanded"
+        launchAff $ updateSearch true
+        resetSearchBoxFade
 
   onDocumentEvent EventTypes.click $ const do
     overSearchBox <- Ref.read mouseOverSearchBox
@@ -769,8 +772,20 @@ createSearchBox nodeConfiguration initiateSearch = do
       focusPatternInput = traverse_ HTMLElement.focus
                         $ HTMLElement.fromElement patternInput
 
+      launchSearchOriginClassUpdater :: Effect Unit
+      launchSearchOriginClassUpdater = do
+        Ref.read searchOrigin >>= case _ of
+          Just hash -> getElementById hash >>= case _ of
+            Just element -> do
+              addClass element "SearchOrigin"
+              void $ Timer.setTimeout 750 $ removeClass element "SearchOrigin"
+            Nothing -> pure unit
+          Nothing -> pure unit
+        void $ Timer.setTimeout 1250 launchSearchOriginClassUpdater
+
+  launchSearchOriginClassUpdater
+
   flip Ref.write initiateSearch \hash -> do
-    Console.log("initiateSearch: " <> show hash)
     Ref.write hash searchOrigin
     resetSearchBoxFade
     focusPatternInput
