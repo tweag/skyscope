@@ -227,7 +227,7 @@ copts = [
     "-Wall",
     "-Werror",
     "-std=c++20",
-] + optimisations
+]
 
 cc_library(
     name = "path",
