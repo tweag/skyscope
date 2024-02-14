@@ -3,6 +3,22 @@ export function getImportId() {
     return importId;
 }
 
+// enableAutoSelect :: EventType -> Element -> Effect Unit
+export function enableAutoSelect(eventType) {
+    return function (element) {
+        return function () {
+            element.addEventListener(eventType, event => {
+                const range = document.createRange();
+                range.selectNodeContents(element);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+                event.stopPropagation();
+            });
+        }
+    }
+}
+
 // scrollIntoView :: Element -> Effect Unit
 export function scrollIntoView(element) {
     return function () {
@@ -25,15 +41,6 @@ export function scrollIntoView(element) {
                 elementBounds.height
             ),
         });
-    }
-}
-
-// onScroll :: Element -> Effect Unit -> Effect Unit
-export function onScroll(element) {
-    return function (action) {
-        return function () {
-            element.addEventListener("scroll", _ => action());
-        }
     }
 }
 
