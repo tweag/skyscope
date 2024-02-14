@@ -75,6 +75,7 @@ div#SearchBox {
     pointer-events: auto;
 }
 
+div#SearchBox.Hide,
 div#SearchBox.Expanded.Fade {
     opacity: 15%;
     transition: opacity 1000ms ease;
@@ -164,6 +165,27 @@ div.ResultRow.BzlLoad                   span.NodeTitle { color: hsl(203, 55%, 29
 div.ResultRow.ToolchainResolution       span.NodeTitle { color: hsl(  7, 55%, 29%); }
 div.ResultRow.TransitiveTarget          span.NodeTitle { color: hsl(117, 55%, 29%); }
 div.ResultRow.TargetCompletion          span.NodeTitle { color: hsl(117, 55%, 29%); }
+
+div.Popup                               span.Title { color: hsl(  0,  0%, 25%); }
+div.Popup.ActionExecution               span.Title { color: hsl(318, 55%, 29%); }
+div.Popup.Artifact                      span.Title { color: hsl( 71, 55%, 29%); }
+div.Popup.ArtifactNestedSet             span.Title { color: hsl( 71, 55%, 29%); }
+div.Popup.BuildConfiguration            span.Title { color: hsl(117, 55%, 29%); }
+div.Popup.ClientEnvironmentVariable     span.Title { color: hsl(163, 55%, 29%); }
+div.Popup.ConfiguredTarget              span.Title { color: hsl(117, 55%, 29%); }
+div.Popup.ContainingPackageLookup       span.Title { color: hsl(117, 55%, 29%); }
+div.Popup.DirectoryListing              span.Title { color: hsl(271, 55%, 29%); }
+div.Popup.DirectoryListingState         span.Title { color: hsl(271, 55%, 29%); }
+div.Popup.File                          span.Title { color: hsl(271, 55%, 29%); }
+div.Popup.FileState                     span.Title { color: hsl(271, 55%, 29%); }
+div.Popup.Glob                          span.Title { color: hsl(233, 55%, 29%); }
+div.Popup.PackageLookup                 span.Title { color: hsl(117, 55%, 29%); }
+div.Popup.SingleToolchainResolution     span.Title { color: hsl(  7, 55%, 29%); }
+div.Popup.SingleToolchainResolution     span.Title { color: hsl(  7, 55%, 29%); }
+div.Popup.BzlLoad                       span.Title { color: hsl(203, 55%, 29%); }
+div.Popup.ToolchainResolution           span.Title { color: hsl(  7, 55%, 29%); }
+div.Popup.TransitiveTarget              span.Title { color: hsl(117, 55%, 29%); }
+div.Popup.TargetCompletion              span.Title { color: hsl(117, 55%, 29%); }
 
 g.node                                  text.NodeTitle {  fill: hsl(  0,  0%, 25%); }
 g.node.ActionExecution                  text.NodeTitle {  fill: hsl(318, 55%, 29%); }
@@ -349,3 +371,125 @@ div.Rendering span#Icon {
      65% { transform: rotate(360deg); }
     100% { transform: rotate(360deg); }
 }
+
+
+
+
+div#PopupOverlay {
+    display: flex;
+    height: auto;
+    justify-content: center;
+    left: 0;
+    max-height: 100%;
+    pointer-events: none;
+    position: fixed;
+    top: 0;
+    width: 100%;
+}
+
+div.Popup {
+    position: fixed;
+    background-color: hsla(197, 17%, 92%, 90%);
+    border-radius: 5px;
+    align-items: stretch;
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+    overflow: hidden;
+}
+
+div.Popup > div.Header {
+    font-family: monospace;
+    font-size: 12px;
+    display: flex;
+    margin: 5px 5px 0;
+}
+
+div.Popup > div.Header > span.Title {
+    font-weight: bold;
+    user-select: none;
+}
+
+div.Popup > div.Header > span.Label {
+    margin-left: 10px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+}
+
+div.Popup > div.Header > span.Spacer {
+    flex-grow: 1;
+}
+
+div.Popup > div.Header > span.Icon {
+    cursor: pointer;
+}
+
+div.Popup > div.Content {
+    margin: 5px;
+    border-radius: 3px;
+    background-color: hsl(0, 0%, 97%);
+    font-family: monospace;
+    font-size: 10px;
+    min-height: 0;
+    overflow: clip;
+    flex-grow: 1;
+}
+
+div.Popup > div.Content > p {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: pre;
+    margin: 0;
+}
+
+/*
+div#PopupOverlay > div#PopupContainer {
+    flex-direction: column;
+    margin: 160px 60px 70px;
+    width: 100%;
+}
+
+div#PopupDualPane {
+    display: flex;
+    width: 100%;
+}
+
+div#PopupLeftPane {
+    display: flex;
+    margin-right: 30px;
+    width: 50%;
+}
+
+div#PopupRightPane {
+    display: flex;
+    margin-left: 30px;
+    width: 50%;
+}
+
+div.PopupButton {
+    position: absolute;
+    pointer-events: auto;
+    user-select: none;
+    cursor: pointer;
+}
+
+
+
+div#TestLeft {
+    border: 1px red solid;
+    height: 1500px;
+    width: 100%;
+}
+
+div#TestRight {
+    border: 1px green solid;
+    height: 300px;
+    width: 100%;
+}
+
+div#TestDual {
+    border: 1px blue solid;
+    width: 100%;
+}
+*/

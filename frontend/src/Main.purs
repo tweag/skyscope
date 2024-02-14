@@ -24,10 +24,12 @@ import Data.DateTime.Instant as Instant
 import Data.Either (Either(..), fromRight)
 import Data.Foldable (foldMap, for_, or, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
+import Data.Int (toNumber)
 import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
+import Data.Number (abs)
 import Data.Number as Number
 import Data.Show as Show
-import Data.String (replaceAll, split, toLower, toUpper)
+import Data.String (joinWith, replaceAll, split, toLower, toUpper)
 import Data.String.CodeUnits as String
 import Data.String.Pattern (Pattern(..), Replacement(..))
 import Data.String.Regex (match, replace, search, split) as Regex
@@ -64,7 +66,7 @@ import Web.DOM.Element as Element
 import Web.DOM.HTMLCollection as HTMLCollection
 import Web.DOM.Node as Node
 import Web.DOM.NonElementParentNode as NonElementParentNode
-import Web.Event.Event (Event, EventType)
+import Web.Event.Event (Event, EventType(..))
 import Web.Event.Event as Event
 import Web.Event.EventTarget as EventTarget
 import Web.HTML as HTML
@@ -78,14 +80,12 @@ import Web.UIEvent.KeyboardEvent as KeyboardEvent
 import Web.UIEvent.KeyboardEvent.EventTypes (keydown, keyup) as EventTypes
 import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as MouseEvent
-import Web.UIEvent.MouseEvent.EventTypes (mouseenter, mouseleave, mousemove) as EventTypes
+import Web.UIEvent.MouseEvent.EventTypes (dblclick, mouseenter, mouseleave, mousemove) as EventTypes
 
 main :: Effect Unit
 main = do
   Console.log "Skyscope 🔭"
-  target <- Window.toEventTarget <$> HTML.window
-  listener <-EventTarget.eventListener $ const load
-  EventTarget.addEventListener EventTypes.load listener false target
+  onWindowEvent EventTypes.load $ const load
 
 load :: Effect Unit
 load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
@@ -95,13 +95,14 @@ load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
     restore nodeConfiguration
     let body = HTMLElement.toElement bodyElement
     graph <- createElement "div" "Graph" $ Just body
-    initiateSearch <- Ref.new $ const $ pure unit
-    nodeClickHandler <- makeTools graph nodeConfiguration initiateSearch
-    renderState <- attachGraphRenderer graph nodeConfiguration nodeClickHandler
+    initiateSearch <- Ref.new $ const $ pure unit -- Will be set later
+    popupOverlay /\ graphEventHandler <- makeTools graph nodeConfiguration initiateSearch
+    renderState <- attachGraphRenderer graph nodeConfiguration graphEventHandler
     searchBox <- createSearchBox nodeConfiguration initiateSearch
     tray <- createTray nodeConfiguration renderState
-    appendElement searchBox body
     appendElement tray body
+    appendElement searchBox body
+    appendElement popupOverlay body
     join $ Ref.read initiateSearch <*> pure Nothing
 
 restore :: NodeConfiguration -> Effect Unit
@@ -114,18 +115,18 @@ type NodeHash = String
 
 data NodeState = Collapsed | Expanded
 
-instance eqNodeState :: Eq NodeState where
+instance Eq NodeState where
   eq Collapsed Collapsed = true
   eq Expanded Expanded = true
   eq _ _ = false
 
-instance decodeJsonNodeState :: DecodeJson NodeState where
+instance DecodeJson NodeState where
   decodeJson json = case Argonaut.toString json of
     Just "Collapsed" -> Right Collapsed
     Just "Expanded" -> Right Expanded
     _ -> Left $ Argonaut.UnexpectedValue json
 
-instance encodeJsonNodeState :: EncodeJson NodeState where
+instance EncodeJson NodeState where
   encodeJson = Argonaut.fromString <<< show
 
 instance Show NodeState where
@@ -200,38 +201,45 @@ makeNodeConfiguration = do
 
   pure { onChange, show, hide, atomically, visible, set, get, preview }
 
-data Click
-  = NodeClick Element
-  | PathClick Element
-
-type ClickHandler = Click -> MouseEvent -> Effect Boolean
-
 type InitiateSearch = Maybe NodeHash -> Effect Unit
 
-makeTools :: Element -> NodeConfiguration -> Ref InitiateSearch -> Effect ClickHandler
+type GraphEventHandler = GraphEvent -> Effect Boolean
+
+data GraphEvent = GraphEvent Element GraphEventType MouseEvent
+
+data GraphEventType
+  = NodeClick
+  | NodeMouseLeave
+  | NodeMouseMove
+  | PathClick
+
+makeTools :: Element -> NodeConfiguration -> Ref InitiateSearch -> Effect (Element /\ GraphEventHandler)
 makeTools graph nodeConfiguration initiateSearch = do
-  clickHandlers <- sequence
+  popupOverlay /\ hoverPopup <- makeHoverPopup
+
+  eventHandlers <- sequence
     [ makeOpenAllPaths
     , makeOpenPath
     , makeCrop
     , makeToggleVisibility
+    , pure hoverPopup
     ]
 
-  pure \element event ->
+  pure $ popupOverlay /\ \graphEvent ->
     let tryTools handlers = case Array.uncons handlers of
           Just { head: handler, tail: handlers'} -> do
-             handled <- handler element event
+             handled <- handler graphEvent
              if handled then pure true
                else tryTools handlers'
           Nothing -> pure false
-     in tryTools clickHandlers
+     in tryTools eventHandlers
 
   where
-    makeToggleVisibility :: Effect ClickHandler
+    makeToggleVisibility :: Effect GraphEventHandler
     makeToggleVisibility = do
       clicking <- Ref.new Nothing
-      pure \click event -> case click of
-        NodeClick node -> true <$ do
+      pure \(GraphEvent node eventType mouseEvent) -> case eventType of
+        NodeClick -> true <$ do
           addClass node "Highlight"
           hash <- Element.id node
           Ref.read clicking >>= case _ of
@@ -239,10 +247,10 @@ makeTools graph nodeConfiguration initiateSearch = do
               Timer.clearTimeout timeoutId
               Ref.write Nothing clicking
               when (hash == firstHash) do
-                Event.stopPropagation $ MouseEvent.toEvent event
+                Event.stopPropagation $ MouseEvent.toEvent mouseEvent
                 join $ Ref.read initiateSearch <*> pure (Just hash)
             Nothing -> do
-              if MouseEvent.ctrlKey || MouseEvent.altKey $ event
+              if MouseEvent.ctrlKey || MouseEvent.altKey $ mouseEvent
                 then nodeConfiguration.hide hash
                 else containsClass node "Collapsed" >>= if _
                   then nodeConfiguration.show hash Expanded
@@ -255,7 +263,8 @@ makeTools graph nodeConfiguration initiateSearch = do
                     else nodeConfiguration.show hash Collapsed
         _ -> pure false
 
-    makeOpenAllPaths :: Effect ClickHandler
+
+    makeOpenAllPaths :: Effect GraphEventHandler
     makeOpenAllPaths = do
       active <- Ref.new false
       let openAllPaths = nodeConfiguration.atomically $ Nothing <$ do
@@ -266,14 +275,14 @@ makeTools graph nodeConfiguration initiateSearch = do
               else removeClass element "Animate"
       onKeyDown "Shift" $ Ref.write true active <* updateDOM
       onKeyUp "Shift" $ Ref.write false active <* updateDOM
-      pure \click _ -> Ref.read active >>= not >>>
-        if _ then pure false else case click of
-          PathClick _ -> launchAff openAllPaths $> true
+      pure \(GraphEvent _ eventType _) -> Ref.read active >>= not >>>
+        if _ then pure false else case eventType of
+          PathClick -> launchAff openAllPaths $> true
           _ -> pure false
 
-    makeOpenPath :: Effect ClickHandler
-    makeOpenPath = pure \click _ -> case click of
-      PathClick edge -> launchAff (openPath edge) $> true
+    makeOpenPath :: Effect GraphEventHandler
+    makeOpenPath = pure \(GraphEvent edge eventType _) -> case eventType of
+      PathClick -> launchAff (openPath edge) $> true
       _ -> pure false
 
     openPath :: Element -> Aff Unit
@@ -293,7 +302,7 @@ makeTools graph nodeConfiguration initiateSearch = do
             Left err -> error $ Affjax.printError err
       _ -> error "malformed edge id"
 
-    makeCrop :: Effect ClickHandler
+    makeCrop :: Effect GraphEventHandler
     makeCrop = do
       activeRef <- Ref.new false
       selectionRef <- Ref.new Object.empty
@@ -325,9 +334,9 @@ makeTools graph nodeConfiguration initiateSearch = do
       onElementEvent graph EventTypes.mouseenter \event ->
         for_ (MouseEvent.fromEvent event) \mouseEvent -> do
           if MouseEvent.shiftKey mouseEvent then pure unit else clear
-      pure \click _ -> Ref.read activeRef >>= not >>> if _ then pure false else
-        case click of
-          NodeClick node -> do
+      pure \(GraphEvent node eventType _) -> Ref.read activeRef >>= not >>> if _ then pure false else
+        case eventType of
+          NodeClick -> do
             hash <- Element.id node
             let toggle = case _ of
                   Just _ -> Nothing
@@ -352,6 +361,147 @@ orderOutsideIn a = if Array.length a `mod` 2 == 0
     Just { head, tail } -> [ head ] <> orderOutsideIn tail
     Nothing -> a
 
+type PopupState =
+  { div :: Maybe Element
+  , leftPane :: Maybe Element
+  , rightPane :: Maybe Element
+  , ratchet :: Maybe (Number /\ Number)
+  }
+
+makeHoverPopup :: Effect (Element /\ GraphEventHandler)
+makeHoverPopup = do
+  popupState <- Ref.new
+    { div: Nothing
+    , leftPane: Nothing
+    , rightPane : Nothing
+    , ratchet : Nothing
+    }
+
+  let createPopup :: MouseEvent -> String -> String -> String -> Effect Element
+      createPopup mouseEvent title label content = do
+        window <- HTML.window
+        windowWidth <- Window.innerWidth window
+        windowHeight <- Window.innerHeight window
+        let mouseX = MouseEvent.clientX mouseEvent
+            mouseY = MouseEvent.clientY mouseEvent
+            centreX = windowWidth / 2
+            centreY = windowHeight / 2
+            popupWidth = 400
+            popupHeight = 200
+            popupX /\ popupY = case (mouseX < centreX) /\ (mouseY < centreY) of
+              true /\ true -> {- Upper-left quadrant -} mouseX /\ mouseY
+              true /\ false -> {- Lower-left quadrant -} mouseX /\ (mouseY - popupHeight)
+              false /\ true -> {- Upper-right quadrant -} (mouseX - popupWidth) /\ mouseY
+              false /\ false -> {- Lower-right quadrant -} (mouseX - popupWidth) /\ (mouseY - popupHeight)
+            property name value = name <> ": " <> show value <> "px"
+            style = joinWith "; "
+              [ property "left" popupX
+              , property "top" popupY
+              , property "width" popupWidth
+              , property "height" popupHeight
+              ]
+        div <- createElement "div" "" Nothing
+        Element.setAttribute "style" style div
+        addClass div "Popup"
+        headerDiv <- createElement "div" "" $ Just div
+        addClass headerDiv "Header"
+        titleSpan <- createElement "span" "" $ Just headerDiv
+        addClass titleSpan "Title"
+        setTextContent title titleSpan
+        labelSpan <- createElement "span" "" $ Just headerDiv
+        addClass labelSpan "Label"
+        setTextContent label labelSpan
+        enableAutoSelect EventTypes.click labelSpan
+        spacerSpan <- createElement "span" "" $ Just headerDiv
+        addClass spacerSpan "Spacer"
+        iconSpan <- createElement "span" "" $ Just headerDiv
+        addClass iconSpan "Icon"
+        setTextContent "↕️" iconSpan
+        contentDiv <- createElement "div" "" $ Just div
+        addClass contentDiv "Content"
+        enableAutoSelect EventTypes.dblclick contentDiv
+        paragraph <- createElement "p" "" $ Just contentDiv
+        setTextContent content paragraph
+        pure div
+
+  let dismissPopup :: Element -> Effect Unit
+      dismissPopup popupDiv = do
+        flip Ref.modify_ popupState \s ->
+          s { div = Nothing, ratchet = Nothing }
+        getElementById "SearchBox" >>= case _ of
+          Just searchBox -> removeClass searchBox "Hide"
+          Nothing -> pure unit
+        removeElement popupDiv
+
+  let checkRatchet :: Boolean -> Element -> MouseEvent -> Effect Boolean
+      checkRatchet set popupDiv mouseEvent = do
+        popupPos <- Element.getBoundingClientRect popupDiv <#> \bbox -> bbox.left /\ bbox.top
+        let d (x1 /\ y1) (x2 /\ y2) = abs (x1 - x2) /\ abs (y1 - y2)
+            mouseX = toNumber $ MouseEvent.clientX mouseEvent
+            mouseY = toNumber $ MouseEvent.clientY mouseEvent
+            mousePos = mouseX /\ mouseY
+            delta = d mousePos popupPos
+            dx /\ dy = delta
+        dxLast /\ dyLast <- flip Ref.modify' popupState \state -> case state.ratchet of
+            Just deltaLast -> { state: (state { ratchet = Just delta }), value: deltaLast }
+            Nothing | set ->  { state: (state { ratchet = Just delta }), value: delta }
+            Nothing -> { state, value: delta }
+        pure $ dx > dxLast || dy > dyLast
+
+  onWindowEvent EventTypes.mousemove \event -> do
+    Ref.read popupState <#> _.div >>= case _ of
+      Just popupDiv -> case MouseEvent.fromEvent event of
+        Just mouseEvent -> checkRatchet false popupDiv mouseEvent
+          >>= if _ then dismissPopup popupDiv else pure unit
+        Nothing -> pure unit
+      Nothing -> pure unit
+
+  let dismissEvents =
+        [ EventTypes.click
+        , EventTypes.dblclick
+        , EventType "scroll"
+        ]
+
+  for_ dismissEvents $ flip onWindowEvent $ const do
+      Ref.read popupState <#> _.div >>= case _ of
+        Just popupDiv -> dismissPopup popupDiv
+        Nothing -> pure unit
+
+  popupOverlay <- createElement "div" "PopupOverlay" Nothing
+
+  let triggerPopup node mouseEvent = do
+        nodeType <- fromMaybe "" <$> Element.getAttribute "data:nodeType" node
+        title <- fromMaybe nodeType <$> Element.getAttribute "data:title" node
+        nodeData <- fromMaybe "" <$> Element.getAttribute "data:nodeData" node
+        label <- fromMaybe "" <$> Element.getAttribute "data:label" node
+        popupDiv <- createPopup mouseEvent title label nodeData
+        flip Ref.modify_ popupState \s -> s { div = Just popupDiv }
+        void $ checkRatchet true popupDiv mouseEvent
+        addClass popupDiv nodeType
+        appendElement popupDiv popupOverlay
+        onElementEvent popupDiv EventTypes.click Event.stopPropagation
+        onElementEvent popupDiv EventTypes.dblclick Event.stopPropagation
+        onElementEvent popupDiv EventTypes.mouseenter $ const do
+          flip Ref.modify_ popupState \s -> s { ratchet = Nothing }
+        onElementEvent popupDiv EventTypes.mouseleave $ const do
+          dismissPopup popupDiv
+        getElementById "SearchBox" >>= case _ of
+          Just searchBox -> addClass searchBox "Hide"
+          Nothing -> pure unit
+
+  hoverTimer <- Ref.new Nothing
+  pure $ popupOverlay /\ \(GraphEvent node eventType mouseEvent) -> do
+    traverse_ Timer.clearTimeout =<< Ref.read hoverTimer
+    case eventType of
+      NodeMouseLeave -> do
+         Ref.write Nothing hoverTimer
+         pure true
+      NodeMouseMove -> do
+        timeoutId <- Timer.setTimeout 500 $ triggerPopup node mouseEvent
+        Ref.write (Just timeoutId) hoverTimer
+        pure true
+      _ -> pure false
+
 data RenderState
   = RenderInit
   | Rendering Int
@@ -365,8 +515,8 @@ instance Show RenderState where
     RenderDone elapsedTime -> "RenderDone (" <> show elapsedTime <> ")"
     RenderFail statusCode -> "RenderFail (" <> show statusCode <> ")"
 
-attachGraphRenderer :: Element -> NodeConfiguration -> ClickHandler -> Effect (Channel RenderState)
-attachGraphRenderer graph nodeConfiguration onClick = do
+attachGraphRenderer :: Element -> NodeConfiguration -> GraphEventHandler -> Effect (Channel RenderState)
+attachGraphRenderer graph nodeConfiguration onEvent = do
   render <- makeRenderer
   renderState <- Signal.channel RenderInit
   renderState <$ nodeConfiguration.onChange \changed -> do
@@ -398,7 +548,7 @@ attachGraphRenderer graph nodeConfiguration onClick = do
                     scrollIntoView element
                     void $ Timer.setTimeout animationDuration $
                       removeClass element "Highlight"
-          decorateGraph svg updateDocument onClick
+          decorateGraph svg updateDocument onEvent
 
   where
     makeRenderer :: Effect (Aff (Either StatusCode Element))
@@ -418,28 +568,31 @@ attachGraphRenderer graph nodeConfiguration onClick = do
             maybe (error "svg element not found") (pure <<< Right) svg
           status -> pure $ Left status
 
-    decorateGraph :: Element -> Effect Unit -> ClickHandler -> Aff Unit
-    decorateGraph svg updateDocument handleClick = do
-      let addClickListener element eventType makeClick = do
-            listener <- EventTarget.eventListener \event ->
-              for_ (MouseEvent.fromEvent event) (handleClick $ makeClick element)
-            EventTarget.addEventListener eventType listener false $ Element.toEventTarget element
+    decorateGraph :: Element -> Effect Unit -> GraphEventHandler -> Aff Unit
+    decorateGraph svg updateDocument handleEvent = do
+      let addMouseListener element graphEventType eventType = onElementEvent element eventType \event ->
+            for_ (MouseEvent.fromEvent event) (handleEvent <<< GraphEvent element graphEventType)
 
       liftEffect $ getElementsByClassName "edge" svg >>= traverse_ \edge -> do
         containsClass edge "Path" >>= if _
-          then addClickListener edge EventTypes.click PathClick
+          then addMouseListener edge PathClick EventTypes.click
           else pure unit
         animateFadeIn edge
 
       contents <- liftEffect $ map Array.catMaybes $ getElementsByClassName "node" svg >>= traverse \node -> do
-        addClickListener node EventTypes.click NodeClick
+        traverse_ removeElement =<< getElementsByTagName "title" node
+        addMouseListener node NodeMouseLeave EventTypes.mouseleave
+        addMouseListener node NodeMouseMove EventTypes.mousemove
+        addMouseListener node NodeClick EventTypes.click
         animateNodeTranslation node
         toNodeElement node >>= case _ of
           Just { anchor, background, text } -> do
             Element.getAttribute "xlink:title" anchor >>= case _ of
               Just nodeData -> do
+                Element.setAttribute "xlink:title" "" anchor
                 let label = join $ Regex.match labelRegex nodeData <#> Array.NonEmpty.head
                     labelRegex = Regex.unsafeRegex "(@[.-\\w]+)?//(/?[^/:,}\\]]+)*(:[^/,}\\]]+(/[^/,}\\]]+)*)?" Regex.noFlags
+                Element.setAttribute "data:label" (fromMaybe "" label) node
                 addClass background "Selectable"
                 case text of
                   Just { title, detail } -> do
@@ -447,10 +600,14 @@ attachGraphRenderer graph nodeConfiguration onClick = do
                           let maxChars = 40
                               ellipsis = if String.length content > maxChars then "…" else ""
                           setTextContent (ellipsis <> String.takeRight maxChars content) detail
-                        setTitle = flip setTextContent title
-                        setTooltip = flip (Element.setAttribute "xlink:title") anchor
+                        setTitle titleContent = do
+                           setTextContent titleContent title
+                           Element.setAttribute "data:title" titleContent node
+                        setTooltip content = do
+                           Element.setAttribute "data:nodeData" content node
                     setDetail =<< flip fromMaybe label <$> textContent detail
                     nodeType <- formatNodeType <$> textContent title
+                    Element.setAttribute "data:nodeType" nodeType node
                     setTitle nodeType
                     setTooltip nodeData
                     addClass node nodeType
@@ -595,7 +752,7 @@ createSearchBox nodeConfiguration initiateSearch = do
   searchOrigin <- Ref.new Nothing
   filterNodes <- makeThrottledAction do
     origin <- liftEffect $ Ref.read searchOrigin
-    let limit = if isJust origin then 16.0 else 64.0
+    let limit = if isJust origin then 16.0 else 256.0
     pattern <- liftEffect $ map (fromMaybe "")
       $ traverse HTMLInputElement.value
       $ HTMLInputElement.fromElement patternInput
@@ -651,8 +808,7 @@ createSearchBox nodeConfiguration initiateSearch = do
               then nodeConfiguration.show hash Collapsed *> updateSelected
               else nodeConfiguration.hide hash *> updateSelected
             visible = Array.notElem hash <$> nodeConfiguration.visible
-        toggleListener <- EventTarget.eventListener $ const toggleSelected
-        EventTarget.addEventListener EventTypes.click toggleListener false $ Element.toEventTarget row
+        onElementEvent row EventTypes.click $ const toggleSelected
         let formattedNodeType = formatNodeType node.nodeType
         addClass row formattedNodeType
         addClass row "ResultRow"
@@ -723,7 +879,7 @@ createSearchBox nodeConfiguration initiateSearch = do
   onElementEvent searchBox EventTypes.mouseleave $ const $ Ref.write false mouseOverSearchBox *> resetSearchBoxFade
   onElementEvent searchBox EventTypes.mousemove $ const resetSearchBoxFade
   onElementEvent searchBox EventTypes.click $ const resetSearchBoxFade
-  onScroll searchResults $ resetSearchBoxFade
+  onElementEvent searchResults (EventType "scroll") $ const resetSearchBoxFade
 
   resultHashes <- Ref.new []
 
@@ -761,6 +917,8 @@ createSearchBox nodeConfiguration initiateSearch = do
         launchAff $ updateSearch true
         resetSearchBoxFade
 
+  onKeyUp "Escape" collapseSearch
+
   onDocumentEvent EventTypes.click $ const do
     overSearchBox <- Ref.read mouseOverSearchBox
     if overSearchBox then pure unit else collapseSearch
@@ -793,31 +951,6 @@ type NodeResults =
   { resultTotalNodes :: Number
   , resultNodes :: Object { nodeData :: String, nodeType :: String }
   }
-
-onKeyUp :: String -> Effect Unit -> Effect Unit
-onKeyUp = onKeyEvent EventTypes.keyup
-
-onKeyDown :: String -> Effect Unit -> Effect Unit
-onKeyDown = onKeyEvent EventTypes.keydown
-
-onKeyEvent :: EventType -> String -> Effect Unit -> Effect Unit
-onKeyEvent eventType key action = onDocumentEvent eventType \event ->
-  for_ (KeyboardEvent.fromEvent event) \keyboardEvent ->
-    if KeyboardEvent.key keyboardEvent == key
-      then action else pure unit
-
-onDocumentEvent :: EventType -> (Event -> Effect Unit) -> Effect Unit
-onDocumentEvent eventType handler = do
-  target <- Window.toEventTarget <$> HTML.window
-  listener <- EventTarget.eventListener handler
-  EventTarget.addEventListener eventType listener false target
-
-onElementEvent :: Element -> EventType -> (Event -> Effect Unit) -> Effect Unit
-onElementEvent element eventType handler = do
-  let target = HTMLElement.toEventTarget
-           <$> HTMLElement.fromElement element
-  listener <- EventTarget.eventListener handler
-  for_ target $ EventTarget.addEventListener eventType listener false
 
 formatNodeType :: String -> String
 formatNodeType nodeType
@@ -863,11 +996,10 @@ createTray nodeConfiguration renderState = do
       status <- createElement "span" "Status" $ Just div
       setTextContent ("Rendering " <> show visibleCount <> " nodes") status
       icon <- createIcon "⏳" "Interrupt" div
-      listener <- EventTarget.eventListener \event ->
+      onElementEvent icon EventTypes.click \event ->
         for_ (MouseEvent.fromEvent event) \mouseEvent ->
           when (MouseEvent.button mouseEvent == 0) do
             Location.reload =<< Window.location =<< HTML.window
-      EventTarget.addEventListener EventTypes.click listener false $ Element.toEventTarget icon
       whenStarting $ flip Ref.write checkpointCandidate <<< fst =<< nodeConfiguration.get
 
     RenderDone (Milliseconds elapsed) -> whenQuiescent $ replaceDiv "RenderDone" \div -> do
@@ -912,6 +1044,36 @@ logError err = when (shouldShow err) (Console.error err)
 error :: forall m a. MonadThrow Error m => String -> m a
 error = throwError <<< Exception.error
 
+onKeyUp :: String -> Effect Unit -> Effect Unit
+onKeyUp = onKeyEvent EventTypes.keyup
+
+onKeyDown :: String -> Effect Unit -> Effect Unit
+onKeyDown = onKeyEvent EventTypes.keydown
+
+onKeyEvent :: EventType -> String -> Effect Unit -> Effect Unit
+onKeyEvent eventType key action = onDocumentEvent eventType \event ->
+  for_ (KeyboardEvent.fromEvent event) \keyboardEvent ->
+    if KeyboardEvent.key keyboardEvent == key
+      then action else pure unit
+
+onWindowEvent :: EventType -> (Event -> Effect Unit) -> Effect Unit
+onWindowEvent eventType handler = do
+  target <- Window.toEventTarget <$> HTML.window
+  listener <-EventTarget.eventListener handler
+  EventTarget.addEventListener eventType listener false target
+
+onDocumentEvent :: EventType -> (Event -> Effect Unit) -> Effect Unit
+onDocumentEvent eventType handler = do
+  target <- Window.toEventTarget <$> HTML.window
+  listener <- EventTarget.eventListener handler
+  EventTarget.addEventListener eventType listener false target
+
+onElementEvent :: Element -> EventType -> (Event -> Effect Unit) -> Effect Unit
+onElementEvent element eventType handler = do
+  let target = Element.toEventTarget element
+  listener <- EventTarget.eventListener handler
+  EventTarget.addEventListener eventType listener false target
+
 createElement :: String -> String -> Maybe Element -> Effect Element
 createElement name id parent = do
   doc <- Window.document =<< HTML.window
@@ -954,6 +1116,12 @@ containsClass element className = do
   classList <- Element.classList element
   DOMTokenList.contains classList className
 
+removeElement :: Element -> Effect Unit
+removeElement element = do
+  let node = Element.toNode element
+  parent <- Node.parentNode node
+  for_ parent $ Node.removeChild node
+
 removeAllChildren :: Element -> Effect Unit
 removeAllChildren element =
   let node = Element.toNode element
@@ -977,9 +1145,9 @@ getElementById id = NonElementParentNode.getElementById id =<<
 
 foreign import getImportId :: Effect String
 
-foreign import scrollIntoView :: Element -> Effect Unit
+foreign import enableAutoSelect :: EventType -> Element -> Effect Unit
 
-foreign import onScroll :: Element -> Effect Unit -> Effect Unit
+foreign import scrollIntoView :: Element -> Effect Unit
 
 foreign import pushHistory :: Json -> Effect Unit
 
