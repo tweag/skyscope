@@ -622,9 +622,6 @@ createSearchBox nodeConfiguration initiateSearch = do
 
   searchResults <- createElement "div" "SearchResults" $ Just searchBox
 
---  let clearPreviewClass :: Effect Unit
---      clearPreviewClass = flip traverse "Previewing" =<< getElementsByClassName "node" undefined
-
   let collapseSearch :: Effect Unit
       collapseSearch = do
         removeAllChildren searchResults
