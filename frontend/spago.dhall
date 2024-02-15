@@ -10,6 +10,7 @@
   , "avar"
   , "bifunctors"
   , "console"
+  , "control"
   , "datetime"
   , "effect"
   , "either"

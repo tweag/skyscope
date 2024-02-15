@@ -75,6 +75,12 @@ export function updateSaveLink() {
     Array.from(svg.getElementsByClassName("Highlight")).forEach(element => element.classList.remove("Highlight"));
     Array.from(svg.getElementsByTagName("a")).forEach(a => a.removeAttribute("xlink:title"));
     Array.from(svg.getElementsByTagName("title")).forEach(title => title.parentNode.removeChild(title));
+    Array.from(svg.getElementsByTagName("g")).forEach(node => {
+        node.removeAttribute("data:nodeType");
+        node.removeAttribute("data:nodeData");
+        node.removeAttribute("data:label");
+        node.removeAttribute("data:title");
+    });
     Array.from(svg.getElementsByTagName("text"))
         .filter(t => t .parentNode.parentNode.parentNode.classList.contains("Path"))
         .forEach(path => path.textContent = "");
