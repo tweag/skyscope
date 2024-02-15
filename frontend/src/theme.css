@@ -356,6 +356,7 @@ a#Save {
 span#Icon {
     font-size: 24px;
     cursor: pointer;
+    user-select: none;
 }
 
 div.Rendering span#Icon {
@@ -372,8 +373,37 @@ div.Rendering span#Icon {
     100% { transform: rotate(360deg); }
 }
 
+div#PopupUnderlay {
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: auto;
+    max-height: 100%;
+    margin-top: 130px;
+    position: fixed;
+    pointer-events: none;
+    justify-content: center;
+    display: flex;
+}
 
+div#PopupUnderlay > div {
+    width: 50vw;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
 
+div#PopupUnderlay > div#LeftPane {
+    padding-top: 30px;
+    padding-left: 30px;
+    padding-right: 15px;
+}
+
+div#PopupUnderlay > div#RightPane {
+    padding-top: 30px;
+    padding-left: 15px;
+    padding-right: 30px;
+}
 
 div#PopupOverlay {
     display: flex;
@@ -385,6 +415,23 @@ div#PopupOverlay {
     position: fixed;
     top: 0;
     width: 100%;
+}
+
+div.Popup.Pinned > div.Content {
+    overflow: auto;
+}
+
+div.Popup.Pinned > div.Content > p {
+    overflow: auto;
+    white-space: pre;
+    margin: 3px 5px;
+}
+
+div.Popup.Pinned {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    max-height: 50vh;
 }
 
 div.Popup {
@@ -422,6 +469,7 @@ div.Popup > div.Header > span.Spacer {
 }
 
 div.Popup > div.Header > span.Icon {
+    user-select: none;
     cursor: pointer;
 }
 
@@ -440,56 +488,5 @@ div.Popup > div.Content > p {
     text-overflow: ellipsis;
     overflow: hidden;
     white-space: pre;
-    margin: 0;
+    margin: 3px 5px;
 }
-
-/*
-div#PopupOverlay > div#PopupContainer {
-    flex-direction: column;
-    margin: 160px 60px 70px;
-    width: 100%;
-}
-
-div#PopupDualPane {
-    display: flex;
-    width: 100%;
-}
-
-div#PopupLeftPane {
-    display: flex;
-    margin-right: 30px;
-    width: 50%;
-}
-
-div#PopupRightPane {
-    display: flex;
-    margin-left: 30px;
-    width: 50%;
-}
-
-div.PopupButton {
-    position: absolute;
-    pointer-events: auto;
-    user-select: none;
-    cursor: pointer;
-}
-
-
-
-div#TestLeft {
-    border: 1px red solid;
-    height: 1500px;
-    width: 100%;
-}
-
-div#TestRight {
-    border: 1px green solid;
-    height: 300px;
-    width: 100%;
-}
-
-div#TestDual {
-    border: 1px blue solid;
-    width: 100%;
-}
-*/

@@ -18,7 +18,7 @@ import Data.Char (isAlphaNum, isSpace)
 import Data.FileEmbed (embedFile)
 import Data.Foldable (asum, for_)
 import Data.Function ((&))
-import Data.Functor ((<&>))
+import Data.Functor (void, (<&>))
 import Data.GraphViz (DotGraph)
 import Data.GraphViz.Attributes.Complete (Attribute (..), Label (..))
 import qualified Data.GraphViz.Parsing as GraphViz
@@ -99,6 +99,21 @@ addContext :: Database -> [(Text, Text)] -> IO ()
 addContext database context = do
   let records = context <&> \(k, v) -> [SQLText k, SQLText v]
   Sqlite.batchInsert database "context" ["context_key", "context_data"] records
+
+listConfigs :: Handle -> FilePath -> IO [Text]
+listConfigs source _ =
+  Text.lines <$> Text.hGetContents source <&> \case
+    "Available configurations:" : lines -> head . Text.words <$> lines
+    _ -> error "unexpected output from bazel config"
+
+importConfig :: Text -> Handle -> FilePath -> IO ()
+importConfig hash source path = withDatabase "importing configs " path $ \database -> do
+  config <- Text.hGetContents source
+  void $
+    Sqlite.executeSql
+      database
+      ["INSERT INTO context (context_key, context_data) VALUES (?, ?);"]
+      [SQLText hash, SQLText config]
 
 importTargets :: Handle -> FilePath -> IO ()
 importTargets source path = withDatabase "importing targets" path $ \database -> do

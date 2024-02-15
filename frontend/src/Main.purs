@@ -4,6 +4,7 @@ import Affjax.RequestBody as Affjax.RequestBody
 import Affjax.ResponseFormat as Affjax.ResponseFormat
 import Affjax.StatusCode (StatusCode(..))
 import Affjax.Web as Affjax
+import Control.Alt ((<|>))
 import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Control.Monad.State.Trans (StateT, evalStateT, get, put)
@@ -25,7 +26,7 @@ import Data.Either (Either(..), fromRight)
 import Data.Foldable (foldMap, for_, or, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
 import Data.Int (toNumber)
-import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe)
 import Data.Number (abs)
 import Data.Number as Number
 import Data.Show as Show
@@ -95,11 +96,12 @@ load = HTML.window >>= Window.document >>= HTMLDocument.body >>= case _ of
     restore nodeConfiguration
     let body = HTMLElement.toElement bodyElement
     graph <- createElement "div" "Graph" $ Just body
-    initiateSearch <- Ref.new $ const $ pure unit -- Will be set later
-    popupOverlay /\ graphEventHandler <- makeTools graph nodeConfiguration initiateSearch
+    initiateSearch <- Ref.new $ const $ pure unit -- Will be set by SearchBox later.
+    popupUnderlay /\ popupOverlay /\ graphEventHandler <- makeTools graph nodeConfiguration initiateSearch
     renderState <- attachGraphRenderer graph nodeConfiguration graphEventHandler
     searchBox <- createSearchBox nodeConfiguration initiateSearch
     tray <- createTray nodeConfiguration renderState
+    appendElement popupUnderlay body
     appendElement tray body
     appendElement searchBox body
     appendElement popupOverlay body
@@ -213,9 +215,9 @@ data GraphEventType
   | NodeMouseMove
   | PathClick
 
-makeTools :: Element -> NodeConfiguration -> Ref InitiateSearch -> Effect (Element /\ GraphEventHandler)
+makeTools :: Element -> NodeConfiguration -> Ref InitiateSearch -> Effect (Element /\ Element /\ GraphEventHandler)
 makeTools graph nodeConfiguration initiateSearch = do
-  popupOverlay /\ hoverPopup <- makeHoverPopup
+  popupUnderlay /\ popupOverlay /\ hoverPopup <- makeHoverPopup
 
   eventHandlers <- sequence
     [ makeOpenAllPaths
@@ -225,7 +227,7 @@ makeTools graph nodeConfiguration initiateSearch = do
     , pure hoverPopup
     ]
 
-  pure $ popupOverlay /\ \graphEvent ->
+  pure $ popupUnderlay /\ popupOverlay /\ \graphEvent ->
     let tryTools handlers = case Array.uncons handlers of
           Just { head: handler, tail: handlers'} -> do
              handled <- handler graphEvent
@@ -368,7 +370,7 @@ type PopupState =
   , ratchet :: Maybe (Number /\ Number)
   }
 
-makeHoverPopup :: Effect (Element /\ GraphEventHandler)
+makeHoverPopup :: Effect (Element /\ Element /\ GraphEventHandler)
 makeHoverPopup = do
   popupState <- Ref.new
     { div: Nothing
@@ -376,6 +378,37 @@ makeHoverPopup = do
     , rightPane : Nothing
     , ratchet : Nothing
     }
+
+  underlayDiv <- createElement "div" "PopupUnderlay" Nothing
+  leftDiv <- createElement "div" "LeftPane" $ Just underlayDiv
+  rightDiv <- createElement "div" "RightPane" $ Just underlayDiv
+
+  let expandPopup :: Element -> Effect Unit
+      expandPopup popupDiv = do
+        window <- HTML.window
+        windowWidth <- toNumber <$> Window.innerWidth window
+        popupMidX <- Element.getBoundingClientRect popupDiv <#> \bbox -> bbox.left + bbox.width / 2.0
+        leftEmpty <- isNothing <$> Node.firstChild (Element.toNode leftDiv)
+        rightEmpty <- isNothing <$> Node.firstChild (Element.toNode rightDiv)
+        let pinLeft = leftDiv <$ Ref.modify_ _ { leftPane = Just popupDiv } popupState
+            pinRight = rightDiv <$ Ref.modify_ _ { rightPane = Just popupDiv } popupState
+            favourLeft = popupMidX < windowWidth / 2.0
+        paneDiv <- case leftEmpty /\ rightEmpty of
+            true /\ false -> pinLeft
+            false /\ true -> pinRight
+            true /\ true | favourLeft ->pinLeft
+            true /\ true | otherwise -> pinRight
+            false /\ false | favourLeft -> removeAllChildren leftDiv *> pinLeft
+            false /\ false | otherwise -> removeAllChildren rightDiv *> pinRight
+        Element.removeAttribute "style" popupDiv
+        appendElement popupDiv paneDiv
+        addClass popupDiv "Pinned"
+        iconSpan <- createElement "span" "" Nothing
+        addClass iconSpan "Icon"
+        setTextContent "📍" iconSpan
+        traverse_ removeElement =<< getElementsByClassName "Icon" popupDiv
+        traverse_ (appendElement iconSpan) =<< getElementsByClassName "Header" popupDiv
+        onElementEvent iconSpan EventTypes.click $ const $ removeElement popupDiv
 
   let createPopup :: MouseEvent -> String -> String -> String -> Effect Element
       createPopup mouseEvent title label content = do
@@ -416,9 +449,12 @@ makeHoverPopup = do
         addClass spacerSpan "Spacer"
         iconSpan <- createElement "span" "" $ Just headerDiv
         addClass iconSpan "Icon"
-        setTextContent "↕️" iconSpan
+        setTextContent "📍" iconSpan
+        onElementEvent iconSpan EventTypes.click $ const $ expandPopup div
         contentDiv <- createElement "div" "" $ Just div
         addClass contentDiv "Content"
+        let tooltip = "Double click to select all."
+        Element.setAttribute "title" tooltip contentDiv
         enableAutoSelect EventTypes.dblclick contentDiv
         paragraph <- createElement "p" "" $ Just contentDiv
         setTextContent content paragraph
@@ -431,7 +467,9 @@ makeHoverPopup = do
         getElementById "SearchBox" >>= case _ of
           Just searchBox -> removeClass searchBox "Hide"
           Nothing -> pure unit
-        removeElement popupDiv
+        containsClass popupDiv "Pinned" >>=
+          if _ then pure unit else do
+            removeElement popupDiv
 
   let checkRatchet :: Boolean -> Element -> MouseEvent -> Effect Boolean
       checkRatchet set popupDiv mouseEvent = do
@@ -467,7 +505,7 @@ makeHoverPopup = do
         Just popupDiv -> dismissPopup popupDiv
         Nothing -> pure unit
 
-  popupOverlay <- createElement "div" "PopupOverlay" Nothing
+  overlayDiv <- createElement "div" "PopupOverlay" Nothing
 
   let triggerPopup node mouseEvent = do
         nodeType <- fromMaybe "" <$> Element.getAttribute "data:nodeType" node
@@ -478,7 +516,7 @@ makeHoverPopup = do
         flip Ref.modify_ popupState \s -> s { div = Just popupDiv }
         void $ checkRatchet true popupDiv mouseEvent
         addClass popupDiv nodeType
-        appendElement popupDiv popupOverlay
+        appendElement popupDiv overlayDiv
         onElementEvent popupDiv EventTypes.click Event.stopPropagation
         onElementEvent popupDiv EventTypes.dblclick Event.stopPropagation
         onElementEvent popupDiv EventTypes.mouseenter $ const do
@@ -490,7 +528,7 @@ makeHoverPopup = do
           Nothing -> pure unit
 
   hoverTimer <- Ref.new Nothing
-  pure $ popupOverlay /\ \(GraphEvent node eventType mouseEvent) -> do
+  pure $ underlayDiv /\ overlayDiv /\ \(GraphEvent node eventType mouseEvent) -> do
     traverse_ Timer.clearTimeout =<< Ref.read hoverTimer
     case eventType of
       NodeMouseLeave -> do
@@ -570,8 +608,10 @@ attachGraphRenderer graph nodeConfiguration onEvent = do
 
     decorateGraph :: Element -> Effect Unit -> GraphEventHandler -> Aff Unit
     decorateGraph svg updateDocument handleEvent = do
-      let addMouseListener element graphEventType eventType = onElementEvent element eventType \event ->
-            for_ (MouseEvent.fromEvent event) (handleEvent <<< GraphEvent element graphEventType)
+      let addMouseListener element graphEventType eventType =
+            onElementEvent element eventType \event ->
+              for_ (MouseEvent.fromEvent event)
+                (handleEvent <<< GraphEvent element graphEventType)
 
       liftEffect $ getElementsByClassName "edge" svg >>= traverse_ \edge -> do
         containsClass edge "Path" >>= if _
@@ -589,10 +629,11 @@ attachGraphRenderer graph nodeConfiguration onEvent = do
           Just { anchor, background, text } -> do
             Element.getAttribute "xlink:title" anchor >>= case _ of
               Just nodeData -> do
-                Element.setAttribute "xlink:title" "" anchor
                 let label = join $ Regex.match labelRegex nodeData <#> Array.NonEmpty.head
                     labelRegex = Regex.unsafeRegex "(@[.-\\w]+)?//(/?[^/:,}\\]]+)*(:[^/,}\\]]+(/[^/,}\\]]+)*)?" Regex.noFlags
-                Element.setAttribute "data:label" (fromMaybe "" label) node
+                    config = join $ join $ Regex.match configRegex nodeData <#> Array.NonEmpty.tail >>> Array.head
+                    configRegex = Regex.unsafeRegex "BuildConfigurationKey\\[([0-9a-f]{64})\\]" Regex.noFlags
+                Element.setAttribute "data:label" (fromMaybe "" $ label <|> config) node
                 addClass background "Selectable"
                 case text of
                   Just { title, detail } -> do
@@ -608,12 +649,14 @@ attachGraphRenderer graph nodeConfiguration onEvent = do
                     setDetail =<< flip fromMaybe label <$> textContent detail
                     nodeType <- formatNodeType <$> textContent title
                     Element.setAttribute "data:nodeType" nodeType node
+                    Element.setAttribute "xlink:title" "" anchor
                     setTitle nodeType
                     setTooltip nodeData
                     addClass node nodeType
                     addClass title "NodeTitle"
                     addClass detail "NodeDetail"
                     let contextKey = case nodeType of
+                          "BuildConfiguration" -> config
                           "ConfiguredTarget" -> label
                           "ActionExecution" ->
                             let regex = Regex.unsafeRegex "(?<=actionIndex=)[0-9]+" Regex.noFlags
@@ -752,7 +795,7 @@ createSearchBox nodeConfiguration initiateSearch = do
   searchOrigin <- Ref.new Nothing
   filterNodes <- makeThrottledAction do
     origin <- liftEffect $ Ref.read searchOrigin
-    let limit = if isJust origin then 16.0 else 256.0
+    let limit = if isJust origin then 16.0 else 64.0
     pattern <- liftEffect $ map (fromMaybe "")
       $ traverse HTMLInputElement.value
       $ HTMLInputElement.fromElement patternInput
@@ -889,7 +932,7 @@ createSearchBox nodeConfiguration initiateSearch = do
           Left err -> error $ "unexpected find results json: " <> show err
           Right results -> liftEffect do
             let total = results.resultTotalNodes
-            void $ Ref.modify (max total) nodeCountMaxRef
+            Ref.modify_ (max total) nodeCountMaxRef
             updateNodeCount (if render then "found" else "") total
             Ref.write (Object.keys $ results.resultNodes) resultHashes
             when render $ renderResults results pattern

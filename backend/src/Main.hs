@@ -12,10 +12,11 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, tryJust)
 import Control.Monad (guard, when)
 import Data.Aeson (decode, encode)
-import Data.Foldable (asum, traverse_)
+import Data.Foldable (asum, for_, traverse_)
 import Data.Functor (void, (<&>))
 import Data.List (isPrefixOf, stripPrefix)
 import Data.Maybe (fromMaybe, isNothing)
+import qualified Data.Text as Text
 import Data.UUID (UUID)
 import qualified Import
 import Network.HTTP.Client (Request (..), RequestBody (..), defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
@@ -119,15 +120,11 @@ importWorkspace args = do
               }
             $ \_ (Just bazelStdout) _ _ -> f bazelStdout dbPath
 
-    when (aqueryExpr /= "") $ do
-      putStrLn "importing extra context for actions"
-      (withBazel ["aquery", aqueryExpr] Import.importActions)
-
-    when (queryExpr /= "") $ do
-      putStrLn "importing extra context for targets"
-      (withBazel ["query", queryExpr, "--output", "build"] Import.importTargets)
-
     when (isNothing existingImport) $ do
+      putStrLn "importing extra context for configs"
+      hashes <- withBazel ["config"] Import.listConfigs
+      for_ hashes $ \hash -> withBazel ["config", Text.unpack hash] (Import.importConfig hash)
+
       dumpSkyframeOpt <-
         getBazelVersion >>= \case
           Just version
@@ -142,6 +139,14 @@ importWorkspace args = do
 
       bazel <- getBazelPath
       withStdinFrom bazel ["dump", "--skyframe=" <> dumpSkyframeOpt] (Import.importSkyframe dbPath)
+
+    when (queryExpr /= "") $ do
+      putStrLn "importing extra context for targets"
+      withBazel ["query", queryExpr, "--output", "build"] Import.importTargets
+
+    when (aqueryExpr /= "") $ do
+      putStrLn "importing extra context for actions"
+      withBazel ["aquery", aqueryExpr] Import.importActions
 
 data ImportArgs = ImportArgs
   { queryExpr :: String,
