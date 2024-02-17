@@ -142,11 +142,11 @@ importWorkspace args = do
 
     when (queryExpr /= "") $ do
       putStrLn "importing extra context for targets"
-      withBazel ["query", queryExpr, "--output", "build"] Import.importTargets
+      withBazel ["query", queryExpr, "--output", "build", "--keep_going"] Import.importTargets
 
     when (aqueryExpr /= "") $ do
       putStrLn "importing extra context for actions"
-      withBazel ["aquery", aqueryExpr] Import.importActions
+      withBazel ["aquery", aqueryExpr, "--keep_going"] Import.importActions
 
 data ImportArgs = ImportArgs
   { queryExpr :: String,
