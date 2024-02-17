@@ -40,6 +40,7 @@ import Data.Traversable (for)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Database.SQLite3 (SQLData (..), SQLError (..))
+import qualified Diff
 import GHC.Generics (Generic)
 import GHC.IO.Handle (hDuplicateTo)
 import qualified Language.Haskell.TH as TH
@@ -202,6 +203,11 @@ server port = withImportDb $ \importDatabase -> do
         Right contextKeys ->
           let route Import {..} database = withMemo importId $ Query.getContext database contextKeys
            in Web.json =<< importRoute importDatabase route
+        Left err -> badRequest err
+
+    Web.post "/diff" $
+      Json.eitherDecode <$> Web.body >>= \case
+        Right (lhs, rhs) -> Web.json =<< liftIO (Diff.diff lhs rhs)
         Left err -> badRequest err
   where
     importRoute :: Database -> (Import -> Database -> IO a) -> ActionM a
