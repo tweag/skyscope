@@ -14,6 +14,7 @@ import Data.Argonaut.Core (fromArray, fromNumber, fromObject, fromString, isNull
 import Data.Argonaut.Decode (decodeJson) as Argonaut
 import Data.Argonaut.Decode.Class (class DecodeJson)
 import Data.Argonaut.Decode.Error (JsonDecodeError(..)) as Argonaut
+import Data.Argonaut.Decode.Error (JsonDecodeError)
 import Data.Argonaut.Encode (encodeJson) as Argonaut
 import Data.Argonaut.Encode.Class (class EncodeJson)
 import Data.Array ((:))
@@ -38,7 +39,7 @@ import Data.String.Regex.Flags (global, ignoreCase, noFlags) as Regex
 import Data.String.Regex.Unsafe (unsafeRegex) as Regex
 import Data.Time.Duration (Milliseconds(..))
 import Data.Traversable (sequence, traverse)
-import Data.Tuple (Tuple(..), fst, snd)
+import Data.Tuple (Tuple(..), fst, snd, uncurry)
 import Data.Tuple.Nested ((/\), type (/\))
 import Effect (Effect)
 import Effect.AVar as Effect.AVar
@@ -363,6 +364,30 @@ orderOutsideIn a = if Array.length a `mod` 2 == 0
     Just { head, tail } -> [ head ] <> orderOutsideIn tail
     Nothing -> a
 
+data DiffLine
+  = Added String
+  | Deleted String
+  | Changed String (String /\ String)
+
+instance DecodeJson DiffLine where
+  decodeJson json = do
+    o <- Argonaut.decodeJson json
+    let lookupString k = case Object.lookup k o of
+          Just v -> case Argonaut.toString v of
+            Just s -> Right s
+            Nothing -> unexpected
+          Nothing -> unexpected
+    lookupString "tag" >>= case _ of
+      "Added" -> Added <$> lookupString "contents"
+      "Deleted" -> Deleted <$> lookupString "contents"
+      "Changed" -> case Object.lookup "contents" o of
+        Just c -> uncurry Changed <$> Argonaut.decodeJson c
+        Nothing -> unexpected
+      _ -> unexpected
+    where
+      unexpected :: forall a. Either JsonDecodeError a
+      unexpected = Left $ Argonaut.UnexpectedValue json
+
 type PopupState =
   { div :: Maybe Element
   , leftPane :: Maybe Element
@@ -374,43 +399,91 @@ makeHoverPopup :: Effect (Element /\ Element /\ GraphEventHandler)
 makeHoverPopup = do
   popupState <- Ref.new
     { div: Nothing
-    , leftPane: Nothing
-    , rightPane : Nothing
     , ratchet : Nothing
     }
 
   underlayDiv <- createElement "div" "PopupUnderlay" Nothing
   leftDiv <- createElement "div" "LeftPane" $ Just underlayDiv
   rightDiv <- createElement "div" "RightPane" $ Just underlayDiv
+  overlayDiv <- createElement "div" "PopupOverlay" Nothing
 
-  let expandPopup :: Element -> Effect Unit
-      expandPopup popupDiv = do
-        window <- HTML.window
-        windowWidth <- toNumber <$> Window.innerWidth window
-        popupMidX <- Element.getBoundingClientRect popupDiv <#> \bbox -> bbox.left + bbox.width / 2.0
-        leftEmpty <- isNothing <$> Node.firstChild (Element.toNode leftDiv)
-        rightEmpty <- isNothing <$> Node.firstChild (Element.toNode rightDiv)
-        let pinLeft = leftDiv <$ Ref.modify_ _ { leftPane = Just popupDiv } popupState
-            pinRight = rightDiv <$ Ref.modify_ _ { rightPane = Just popupDiv } popupState
-            favourLeft = popupMidX < windowWidth / 2.0
-        paneDiv <- case leftEmpty /\ rightEmpty of
-            true /\ false -> pinLeft
-            false /\ true -> pinRight
-            true /\ true | favourLeft ->pinLeft
-            true /\ true | otherwise -> pinRight
-            false /\ false | favourLeft -> removeAllChildren leftDiv *> pinLeft
-            false /\ false | otherwise -> removeAllChildren rightDiv *> pinRight
-        Element.removeAttribute "style" popupDiv
-        appendElement popupDiv paneDiv
-        addClass popupDiv "Pinned"
-        iconSpan <- createElement "span" "" Nothing
-        addClass iconSpan "Icon"
-        setTextContent "📍" iconSpan
-        traverse_ removeElement =<< getElementsByClassName "Icon" popupDiv
-        traverse_ (appendElement iconSpan) =<< getElementsByClassName "Header" popupDiv
-        onElementEvent iconSpan EventTypes.click $ const $ removeElement popupDiv
+  let diffPopups :: Effect Unit
+      diffPopups = do
+        let getPopupDiv paneDiv = do
+              firstChild <- Node.firstChild (Element.toNode paneDiv)
+              pure $ join $ map Element.fromNode firstChild
+        pinnedLeft <- getPopupDiv leftDiv
+        pinnedRight <- getPopupDiv rightDiv
+        case pinnedLeft /\ pinnedRight of
+          Just popupDivLeft /\ Just popupDivRight -> do
+            let getContent popupDiv = firstOrEmpty =<< getElementsByTagName "p" popupDiv
+                getTitle popupDiv = firstOrEmpty =<< getElementsByClassName "Title"  popupDiv
+                getConfig popupDiv = firstOrEmpty =<< getElementsByClassName "Label" popupDiv
+                firstOrEmpty = Array.uncons >>> case _ of
+                  Just { head } -> textContent head
+                  Nothing -> pure ""
+            titleLeft <- getTitle popupDivLeft
+            titleRight <- getTitle popupDivRight
+            case titleLeft /\ titleRight of
+              "BuildConfiguration" /\ "BuildConfiguration" -> do
+                lhs <- getContent popupDivLeft
+                rhs <- getContent popupDivRight
+                withDiff lhs rhs \difflines -> do
+                  configLeft <- getConfig popupDivLeft
+                  configRight <- getConfig popupDivRight
+                  let label = "bazel config "
+                        <> String.take 7 configLeft <> " "
+                        <> String.take 7 configRight
+                  traverse_ (setTextContent difflines) =<< getElementsByTagName "p" popupDivLeft
+                  traverse_ (setTextContent "diff") =<< getElementsByClassName "Title" popupDivLeft
+                  traverse_ (setTextContent label) =<< getElementsByClassName "Label" popupDivLeft
+                  addClass popupDivLeft "Diff"
+                  removeElement popupDivRight
+                  pure unit
+              _ -> pure unit
+          _ -> pure unit
 
-  let createPopup :: MouseEvent -> String -> String -> String -> Effect Element
+      -- withDiff :: String -> String -> (Array DiffLine -> Effect Unit) -> Effect Unit
+
+      withDiff :: String -> String -> (String -> Effect Unit) -> Effect Unit
+      withDiff lhs rhs action = launchAff $ do
+        result <- Affjax.post Affjax.ResponseFormat.json "diff"
+          $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray $ Argonaut.fromString <$> [ lhs, rhs ]
+        case result of
+          Left err -> error $ Affjax.printError err
+          Right response -> case Argonaut.decodeJson response.body of
+            Left err -> error $ "failed to decode difflines: " <> Show.show err
+            Right difflines -> liftEffect $ action difflines
+
+      triggerGraphPopup :: Element -> MouseEvent -> Effect Unit
+      triggerGraphPopup node mouseEvent = do
+        getElementsByClassName "Popup" overlayDiv >>= traverse_ \popupDiv -> do
+          pinned <- containsClass popupDiv "Pinned"
+          if pinned then pure unit else removeElement popupDiv
+        nodeType <- fromMaybe "" <$> Element.getAttribute "data:nodeType" node
+        title <- fromMaybe nodeType <$> Element.getAttribute "data:title" node
+        nodeData <- fromMaybe "" <$> Element.getAttribute "data:nodeData" node
+        label <- fromMaybe "" <$> Element.getAttribute "data:label" node
+        popupDiv <- createPopup mouseEvent title label nodeData
+        addClass popupDiv nodeType
+        showPopup popupDiv mouseEvent
+
+      showPopup :: Element -> MouseEvent -> Effect Unit
+      showPopup popupDiv mouseEvent = do
+        flip Ref.modify_ popupState \s -> s { div = Just popupDiv }
+        void $ checkRatchet true popupDiv mouseEvent
+        appendElement popupDiv overlayDiv
+        onElementEvent popupDiv EventTypes.click Event.stopPropagation
+        onElementEvent popupDiv EventTypes.dblclick Event.stopPropagation
+        onElementEvent popupDiv EventTypes.mouseenter $ const do
+          flip Ref.modify_ popupState \s -> s { ratchet = Nothing }
+        onElementEvent popupDiv EventTypes.mouseleave $ const do
+          dismissPopup popupDiv
+        getElementById "SearchBox" >>= case _ of
+          Just searchBox -> addClass searchBox "Hide"
+          Nothing -> pure unit
+
+      createPopup :: MouseEvent -> String -> String -> String -> Effect Element
       createPopup mouseEvent title label content = do
         window <- HTML.window
         windowWidth <- Window.innerWidth window
@@ -460,18 +533,33 @@ makeHoverPopup = do
         setTextContent content paragraph
         pure div
 
-  let dismissPopup :: Element -> Effect Unit
-      dismissPopup popupDiv = do
-        flip Ref.modify_ popupState \s ->
-          s { div = Nothing, ratchet = Nothing }
-        getElementById "SearchBox" >>= case _ of
-          Just searchBox -> removeClass searchBox "Hide"
-          Nothing -> pure unit
-        containsClass popupDiv "Pinned" >>=
-          if _ then pure unit else do
-            removeElement popupDiv
+      expandPopup :: Element -> Effect Unit
+      expandPopup popupDiv = do
+        window <- HTML.window
+        windowWidth <- toNumber <$> Window.innerWidth window
+        popupMidX <- Element.getBoundingClientRect popupDiv <#> \bbox -> bbox.left + bbox.width / 2.0
+        leftEmpty <- isNothing <$> Node.firstChild (Element.toNode leftDiv)
+        rightEmpty <- isNothing <$> Node.firstChild (Element.toNode rightDiv)
+        let favourLeft = popupMidX < windowWidth / 2.0
+        paneDiv <- case leftEmpty /\ rightEmpty of
+            false /\ false | favourLeft -> removeAllChildren leftDiv $> leftDiv
+            false /\ false | otherwise -> removeAllChildren rightDiv $> rightDiv
+            true /\ true | favourLeft -> pure leftDiv
+            true /\ true | otherwise -> pure rightDiv
+            true /\ false -> pure leftDiv
+            false /\ true -> pure rightDiv
+        Element.removeAttribute "style" popupDiv
+        appendElement popupDiv paneDiv
+        addClass popupDiv "Pinned"
+        iconSpan <- createElement "span" "" Nothing
+        addClass iconSpan "Icon"
+        setTextContent "📍" iconSpan
+        traverse_ removeElement =<< getElementsByClassName "Icon" popupDiv
+        traverse_ (appendElement iconSpan) =<< getElementsByClassName "Header" popupDiv
+        onElementEvent iconSpan EventTypes.click $ const $ removeElement popupDiv
+        diffPopups
 
-  let checkRatchet :: Boolean -> Element -> MouseEvent -> Effect Boolean
+      checkRatchet :: Boolean -> Element -> MouseEvent -> Effect Boolean
       checkRatchet set popupDiv mouseEvent = do
         popupPos <- Element.getBoundingClientRect popupDiv <#> \bbox -> bbox.left /\ bbox.top
         let d (x1 /\ y1) (x2 /\ y2) = abs (x1 - x2) /\ abs (y1 - y2)
@@ -485,6 +573,17 @@ makeHoverPopup = do
             Nothing | set ->  { state: (state { ratchet = Just delta }), value: delta }
             Nothing -> { state, value: delta }
         pure $ dx > dxLast || dy > dyLast
+
+      dismissPopup :: Element -> Effect Unit
+      dismissPopup popupDiv = do
+        flip Ref.modify_ popupState \s ->
+          s { div = Nothing, ratchet = Nothing }
+        getElementById "SearchBox" >>= case _ of
+          Just searchBox -> removeClass searchBox "Hide"
+          Nothing -> pure unit
+        containsClass popupDiv "Pinned" >>=
+          if _ then pure unit else do
+            removeElement popupDiv
 
   onWindowEvent EventTypes.mousemove \event -> do
     Ref.read popupState <#> _.div >>= case _ of
@@ -505,28 +604,6 @@ makeHoverPopup = do
         Just popupDiv -> dismissPopup popupDiv
         Nothing -> pure unit
 
-  overlayDiv <- createElement "div" "PopupOverlay" Nothing
-
-  let triggerPopup node mouseEvent = do
-        nodeType <- fromMaybe "" <$> Element.getAttribute "data:nodeType" node
-        title <- fromMaybe nodeType <$> Element.getAttribute "data:title" node
-        nodeData <- fromMaybe "" <$> Element.getAttribute "data:nodeData" node
-        label <- fromMaybe "" <$> Element.getAttribute "data:label" node
-        popupDiv <- createPopup mouseEvent title label nodeData
-        flip Ref.modify_ popupState \s -> s { div = Just popupDiv }
-        void $ checkRatchet true popupDiv mouseEvent
-        addClass popupDiv nodeType
-        appendElement popupDiv overlayDiv
-        onElementEvent popupDiv EventTypes.click Event.stopPropagation
-        onElementEvent popupDiv EventTypes.dblclick Event.stopPropagation
-        onElementEvent popupDiv EventTypes.mouseenter $ const do
-          flip Ref.modify_ popupState \s -> s { ratchet = Nothing }
-        onElementEvent popupDiv EventTypes.mouseleave $ const do
-          dismissPopup popupDiv
-        getElementById "SearchBox" >>= case _ of
-          Just searchBox -> addClass searchBox "Hide"
-          Nothing -> pure unit
-
   hoverTimer <- Ref.new Nothing
   pure $ underlayDiv /\ overlayDiv /\ \(GraphEvent node eventType mouseEvent) -> do
     traverse_ Timer.clearTimeout =<< Ref.read hoverTimer
@@ -535,7 +612,7 @@ makeHoverPopup = do
          Ref.write Nothing hoverTimer
          pure true
       NodeMouseMove -> do
-        timeoutId <- Timer.setTimeout 500 $ triggerPopup node mouseEvent
+        timeoutId <- Timer.setTimeout 500 $ triggerGraphPopup node mouseEvent
         Ref.write (Just timeoutId) hoverTimer
         pure true
       _ -> pure false

@@ -28,7 +28,7 @@ import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -36,8 +36,10 @@ import qualified Data.Text.IO as Text
 import qualified Data.Text.Lazy as LazyText
 import qualified Data.Text.Lazy.IO as LazyText
 import Data.Traversable (for)
+import Data.Tuple (swap)
 import Database.SQLite3 (SQLData (..))
 import Foreign.C.String (CString, withCString)
+import GHC.Stack (HasCallStack)
 import Sqlite (Database)
 import qualified Sqlite
 import System.IO (Handle)
@@ -107,7 +109,7 @@ listConfigs source _ =
     _ -> error "unexpected output from bazel config"
 
 importConfig :: Text -> Handle -> FilePath -> IO ()
-importConfig hash source path = withDatabase "importing configs " path $ \database -> do
+importConfig hash source path = withDatabase "importing config " path $ \database -> do
   config <- Text.hGetContents source
   void $
     Sqlite.executeSql
@@ -115,7 +117,7 @@ importConfig hash source path = withDatabase "importing configs " path $ \databa
       ["INSERT INTO context (context_key, context_data) VALUES (?, ?);"]
       [SQLText hash, SQLText config]
 
-importTargets :: Handle -> FilePath -> IO ()
+importTargets :: HasCallStack => Handle -> FilePath -> IO ()
 importTargets source path = withDatabase "importing targets" path $ \database -> do
   workspace <- maybe "" Text.pack <$> getSkyscopeEnv "WORKSPACE"
   external <- maybe "" Text.pack <$> getSkyscopeEnv "OUTPUT_BASE" <&> (<> "/external/")
@@ -133,33 +135,41 @@ importTargets source path = withDatabase "importing targets" path $ \database ->
 
       parseLabel text =
         parsePackage text & \(package, text) ->
-          ((package <> ":") <>) $ fst $ findLine "  name = \"" text & Text.break (== '"')
+          findLine "  name = \"" text
+            <&> (Text.break (== '"') >>> \(name, _) -> package <> ":" <> name)
 
-  targets <- map (parseLabel &&& id) <$> getParagraphs source (Text.any (/= '\n'))
+      parseParagraphs =
+        mapMaybe (fmap swap . sequenceA . (id &&& parseLabel))
+
+  targets <- parseParagraphs <$> getParagraphs source (Text.any (/= '\n'))
   for_ targets $ \(label, _) -> putStrLn $ "importing target " <> Text.unpack label
   addContext database targets
 
-importActions :: Handle -> FilePath -> IO ()
+importActions :: HasCallStack => Handle -> FilePath -> IO ()
 importActions source path = withDatabase "importing actions" path $ \database -> do
-  let parseAction paragraph = (findLine "  Target: " paragraph, paragraph)
+  let parseAction paragraph = swap <$> sequenceA (paragraph, findLine "  Target: " paragraph)
       indexedActions group = (0 :| [1 ..]) `NonEmpty.zip` (snd <$> group)
       filterActions = filter $ \paragraph ->
         let stripValidPrefix =
               fmap asum $
                 sequenceA
                   [ Text.stripPrefix "action '",
-                    Text.stripPrefix "runfiles for ",
+                    Text.stripPrefix "for ",
                     Text.stripPrefix "BazelCppSemantics"
                   ]
          in case stripValidPrefix paragraph of
               Just _ -> True
-              Nothing
-                | Text.all isSpace paragraph -> False
-                | otherwise -> False -- errorRed $ "failed to parse action:\n" <> Text.unpack paragraph
+              Nothing ->
+                let dropFirstWord = Text.unwords . drop 1 . Text.words
+                 in case stripValidPrefix $ dropFirstWord paragraph of
+                      Just _ -> True
+                      Nothing
+                        | Text.all isSpace paragraph -> False
+                        | otherwise -> False -- errorRed $ "failed to parse action:\n" <> Text.unpack paragraph
   groups <-
     NonEmpty.groupBy (\x y -> fst x == fst y)
       . sortOn fst
-      . map parseAction
+      . mapMaybe parseAction
       . filterActions
       <$> getParagraphs source (const True)
 
@@ -176,13 +186,13 @@ importActions source path = withDatabase "importing actions" path $ \database ->
 getParagraphs :: Handle -> (Text -> Bool) -> IO [Text]
 getParagraphs source predicate = filter predicate . Text.splitOn "\n\n" <$> Text.hGetContents source
 
-findLine :: Text -> Text -> Text
+findLine :: HasCallStack => Text -> Text -> Maybe Text
 findLine prefix paragraph =
   let find = \case
-        [] -> errorRed $ "missing " <> Text.unpack prefix <> ":\n" <> Text.unpack paragraph
+        [] -> Nothing
         (line : lines) -> case Text.stripPrefix prefix line of
           Nothing -> find lines
-          Just text -> text
+          result -> result
    in find $ Text.lines paragraph
 
 importGraphviz :: Handle -> FilePath -> IO ()
@@ -217,5 +227,5 @@ importGraphviz source path = withDatabase "importing graphviz" path $ \database 
     indexedEdges <&> \(g, s, t) -> SQLInteger <$> [g, s, t]
   putStrLn $ path <> "\n    imported " <> show (Map.size nodes) <> " nodes and " <> show (length edges) <> " edges"
 
-errorRed :: String -> a
+errorRed :: HasCallStack => String -> a
 errorRed message = error $ "\x1b[31m" <> message <> "\x1b[0m"

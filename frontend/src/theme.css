@@ -417,6 +417,12 @@ div#PopupOverlay {
     width: 100%;
 }
 
+div.Popup.Pinned.Diff {
+  position: fixed;
+  width: 60vw;
+  left: 20%;
+}
+
 div.Popup.Pinned > div.Content {
     overflow: auto;
 }

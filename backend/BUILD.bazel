@@ -37,6 +37,7 @@ haskell_binary(
     name = "skyscope",
     srcs = [
         ":src/Common.hs",
+        ":src/Diff.hs",
         ":src/Import.hs",
         ":src/Main.hs",
         ":src/Model.hs",
