@@ -52,7 +52,7 @@ If you're running Linux, you can download Skyscope as a prebuilt statically link
 
 1. Go to the [releases page](https://github.com/tweag/skyscope/releases) and
 pick the version you want. The latest is
-[v0.3.2](https://github.com/tweag/skyscope/releases/v0.3.2).
+[v0.4.0](https://github.com/tweag/skyscope/releases/v0.4.0).
 
 2. Download the zip archive and unpack it somewhere; e.g.
 ```bash
