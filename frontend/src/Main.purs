@@ -24,7 +24,7 @@ import Data.Bifunctor (bimap, lmap, rmap)
 import Data.DateTime as DateTime
 import Data.DateTime.Instant as Instant
 import Data.Either (Either(..), fromRight)
-import Data.Foldable (foldMap, for_, or, sequence_, traverse_)
+import Data.Foldable (and, foldMap, for_, or, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
 import Data.Int (toNumber)
 import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe)
@@ -388,19 +388,9 @@ instance DecodeJson DiffLine where
       unexpected :: forall a. Either JsonDecodeError a
       unexpected = Left $ Argonaut.UnexpectedValue json
 
-type PopupState =
-  { div :: Maybe Element
-  , leftPane :: Maybe Element
-  , rightPane :: Maybe Element
-  , ratchet :: Maybe (Number /\ Number)
-  }
-
 makeHoverPopup :: Effect (Element /\ Element /\ GraphEventHandler)
 makeHoverPopup = do
-  popupState <- Ref.new
-    { div: Nothing
-    , ratchet : Nothing
-    }
+  popupState <- Ref.new { div: Nothing }
 
   underlayDiv <- createElement "div" "PopupUnderlay" Nothing
   leftDiv <- createElement "div" "LeftPane" $ Just underlayDiv
@@ -443,7 +433,8 @@ makeHoverPopup = do
               _ -> pure unit
           _ -> pure unit
 
-      -- withDiff :: String -> String -> (Array DiffLine -> Effect Unit) -> Effect Unit
+      dismissDiff :: Effect Unit
+      dismissDiff = traverse_ removeElement =<< getElementsByClassName "Diff" underlayDiv
 
       withDiff :: String -> String -> (String -> Effect Unit) -> Effect Unit
       withDiff lhs rhs action = launchAff $ do
@@ -471,14 +462,9 @@ makeHoverPopup = do
       showPopup :: Element -> MouseEvent -> Effect Unit
       showPopup popupDiv mouseEvent = do
         flip Ref.modify_ popupState \s -> s { div = Just popupDiv }
-        void $ checkRatchet true popupDiv mouseEvent
         appendElement popupDiv overlayDiv
         onElementEvent popupDiv EventTypes.click Event.stopPropagation
         onElementEvent popupDiv EventTypes.dblclick Event.stopPropagation
-        onElementEvent popupDiv EventTypes.mouseenter $ const do
-          flip Ref.modify_ popupState \s -> s { ratchet = Nothing }
-        onElementEvent popupDiv EventTypes.mouseleave $ const do
-          dismissPopup popupDiv
         getElementById "SearchBox" >>= case _ of
           Just searchBox -> addClass searchBox "Hide"
           Nothing -> pure unit
@@ -535,6 +521,7 @@ makeHoverPopup = do
 
       expandPopup :: Element -> Effect Unit
       expandPopup popupDiv = do
+        dismissDiff
         window <- HTML.window
         windowWidth <- toNumber <$> Window.innerWidth window
         popupMidX <- Element.getBoundingClientRect popupDiv <#> \bbox -> bbox.left + bbox.width / 2.0
@@ -559,25 +546,25 @@ makeHoverPopup = do
         onElementEvent iconSpan EventTypes.click $ const $ removeElement popupDiv
         diffPopups
 
-      checkRatchet :: Boolean -> Element -> MouseEvent -> Effect Boolean
-      checkRatchet set popupDiv mouseEvent = do
-        popupPos <- Element.getBoundingClientRect popupDiv <#> \bbox -> bbox.left /\ bbox.top
-        let d (x1 /\ y1) (x2 /\ y2) = abs (x1 - x2) /\ abs (y1 - y2)
-            mouseX = toNumber $ MouseEvent.clientX mouseEvent
+      nearbyPopup :: Element -> MouseEvent -> Effect Boolean
+      nearbyPopup popupDiv mouseEvent = do
+        region <- Element.getBoundingClientRect popupDiv <#> \bbox ->
+          { left: bbox.left - margin, right: bbox.right + margin
+          , top: bbox.top - margin, bottom: bbox.bottom + margin }
+        let mouseX = toNumber $ MouseEvent.clientX mouseEvent
             mouseY = toNumber $ MouseEvent.clientY mouseEvent
-            mousePos = mouseX /\ mouseY
-            delta = d mousePos popupPos
-            dx /\ dy = delta
-        dxLast /\ dyLast <- flip Ref.modify' popupState \state -> case state.ratchet of
-            Just deltaLast -> { state: (state { ratchet = Just delta }), value: deltaLast }
-            Nothing | set ->  { state: (state { ratchet = Just delta }), value: delta }
-            Nothing -> { state, value: delta }
-        pure $ dx > dxLast || dy > dyLast
+        pure $ and
+          [ mouseX > region.left
+          , mouseX < region.right
+          , mouseY > region.top
+          , mouseY < region.bottom
+          ]
+        where
+          margin = 25.0
 
       dismissPopup :: Element -> Effect Unit
       dismissPopup popupDiv = do
-        flip Ref.modify_ popupState \s ->
-          s { div = Nothing, ratchet = Nothing }
+        Ref.modify_ _ { div = Nothing } popupState
         getElementById "SearchBox" >>= case _ of
           Just searchBox -> removeClass searchBox "Hide"
           Nothing -> pure unit
@@ -588,8 +575,8 @@ makeHoverPopup = do
   onWindowEvent EventTypes.mousemove \event -> do
     Ref.read popupState <#> _.div >>= case _ of
       Just popupDiv -> case MouseEvent.fromEvent event of
-        Just mouseEvent -> checkRatchet false popupDiv mouseEvent
-          >>= if _ then dismissPopup popupDiv else pure unit
+        Just mouseEvent -> nearbyPopup popupDiv mouseEvent
+          >>= if _ then pure unit else dismissPopup popupDiv
         Nothing -> pure unit
       Nothing -> pure unit
 
