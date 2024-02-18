@@ -28,7 +28,6 @@ import Data.Foldable (and, foldMap, for_, or, sequence_, traverse_)
 import Data.Formatter.Number (formatNumber)
 import Data.Int (toNumber)
 import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe)
-import Data.Number (abs)
 import Data.Number as Number
 import Data.Show as Show
 import Data.String (joinWith, replaceAll, split, toLower, toUpper)
@@ -457,10 +456,10 @@ makeHoverPopup = do
         label <- fromMaybe "" <$> Element.getAttribute "data:label" node
         popupDiv <- createPopup mouseEvent title label nodeData
         addClass popupDiv nodeType
-        showPopup popupDiv mouseEvent
+        showPopup popupDiv
 
-      showPopup :: Element -> MouseEvent -> Effect Unit
-      showPopup popupDiv mouseEvent = do
+      showPopup :: Element -> Effect Unit
+      showPopup popupDiv = do
         flip Ref.modify_ popupState \s -> s { div = Just popupDiv }
         appendElement popupDiv overlayDiv
         onElementEvent popupDiv EventTypes.click Event.stopPropagation
