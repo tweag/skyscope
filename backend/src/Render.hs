@@ -103,7 +103,7 @@ renderGraph database dbPath nodeStates = do
               <> graphvizAttributes
                 [ ("arrowsize", "0.5"),
                   ("color", "#3f3f3f"),
-                  ("penwidth", "0.2")
+                  ("penwidth", "0.4")
                 ],
             Text.unlines $ uncurry graphvizNode <$> Map.assocs nodeMap,
             Text.unlines $ graphvizEdge [] <$> edges,
