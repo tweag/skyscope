@@ -431,6 +431,7 @@ div.Popup.Pinned > div.Content > p {
     overflow: auto;
     white-space: pre;
     margin: 3px 5px;
+    min-height: 30px;
 }
 
 div.Popup.Pinned {
