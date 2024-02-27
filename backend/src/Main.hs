@@ -121,10 +121,6 @@ importWorkspace args = do
             $ \_ (Just bazelStdout) _ _ -> f bazelStdout dbPath
 
     when (isNothing existingImport) $ do
-      putStrLn "importing extra context for configs"
-      hashes <- withBazel ["config"] Import.listConfigs
-      for_ hashes $ \hash -> withBazel ["config", Text.unpack hash] (Import.importConfig hash)
-
       dumpSkyframeOpt <-
         getBazelVersion >>= \case
           Just version
@@ -139,6 +135,10 @@ importWorkspace args = do
 
       bazel <- getBazelPath
       withStdinFrom bazel ["dump", "--skyframe=" <> dumpSkyframeOpt] (Import.importSkyframe dbPath)
+
+      putStrLn "importing extra context for configs"
+      hashes <- withBazel ["config"] Import.listConfigs
+      for_ hashes $ \hash -> withBazel ["config", Text.unpack hash] (Import.importConfig hash)
 
     when (queryExpr /= "") $ do
       putStrLn "importing extra context for targets"
