@@ -74,6 +74,7 @@ haskell_binary(
         "@stackage//:HList",
         "@stackage//:aeson",
         "@stackage//:attoparsec",
+        "@stackage//:base64-bytestring",
         "@stackage//:bytestring",
         "@stackage//:byteunits",
         "@stackage//:containers",

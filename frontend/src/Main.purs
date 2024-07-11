@@ -31,6 +31,7 @@ import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe)
 import Data.Number as Number
 import Data.Show as Show
 import Data.String (joinWith, replaceAll, split, toLower, toUpper)
+import Data.String.Base64 as Base64
 import Data.String.CodeUnits as String
 import Data.String.Pattern (Pattern(..), Replacement(..))
 import Data.String.Regex (match, replace, search, split) as Regex
@@ -290,18 +291,19 @@ makeTools graph nodeConfiguration initiateSearch = do
     openPath :: Element -> Aff Unit
     openPath edge = liftEffect (Element.id edge <#> split (Pattern "_")) >>= case _ of
       [ origin, destination ] -> do
-          url <- liftEffect $ getImportId <#> (_ <> "/path")
-          result <- Affjax.post Affjax.ResponseFormat.json url
-            $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray
-            [ Argonaut.fromString origin
-            , Argonaut.fromString destination
-            ]
-          case result of
-            Right response -> case join $ Argonaut.toArray response.body <#> traverse Argonaut.toString of
-              Just path -> nodeConfiguration.atomically $ liftEffect $ Nothing <$ do
-                for_ (orderOutsideIn path) $ flip nodeConfiguration.show Collapsed
-              Nothing -> error "unexpected path results json"
-            Left err -> error $ Affjax.printError err
+        let decodeBase64 s = fromRight "invalid-base64" $ Base64.atob s
+        url <- liftEffect $ getImportId <#> (_ <> "/path")
+        result <- Affjax.post Affjax.ResponseFormat.json url
+          $ Just $ Affjax.RequestBody.json $ Argonaut.fromArray
+          [ Argonaut.fromString $ decodeBase64 origin
+          , Argonaut.fromString $ decodeBase64 destination
+          ]
+        case result of
+          Right response -> case join $ Argonaut.toArray response.body <#> traverse Argonaut.toString of
+            Just path -> nodeConfiguration.atomically $ liftEffect $ Nothing <$ do
+              for_ (orderOutsideIn path) $ flip nodeConfiguration.show Collapsed
+            Nothing -> error "unexpected path results json"
+          Left err -> error $ Affjax.printError err
       _ -> error "malformed edge id"
 
     makeCrop :: Effect GraphEventHandler

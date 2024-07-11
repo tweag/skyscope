@@ -15,6 +15,7 @@ import Control.Monad (guard)
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.RWS.Class
 import Control.Monad.State (State, evalState)
+import qualified Data.ByteString.Base64 as Base64
 import Data.Foldable (for_)
 import Data.Functor (($>), (<&>))
 import Data.HList (Label (..))
@@ -28,6 +29,7 @@ import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Data.Text.IO as Text
 import qualified Data.Text.Lazy as LazyText
 import Data.Traversable (for)
@@ -151,8 +153,11 @@ renderGraph database dbPath nodeStates = do
 
     graphvizEdge :: [(Text, Text)] -> Edge -> Text
     graphvizEdge attrs (Edge _ source target) =
-      "    \"node_" <> source <> "\" -> \"node_" <> target <> "\""
-        <> graphvizAttributes (attrs ++ [("id", source <> "_" <> target)])
+      let encodeBase64 :: Text -> Text
+          encodeBase64 = decodeUtf8 . Base64.encode . encodeUtf8
+          edgeId = encodeBase64 source <> "_" <> encodeBase64 target
+       in "    \"node_" <> source <> "\" -> \"node_" <> target <> "\""
+            <> graphvizAttributes (attrs ++ [("id", edgeId)])
 
     graphvizAttributes :: [(Text, Text)] -> Text
     graphvizAttributes attrs =
