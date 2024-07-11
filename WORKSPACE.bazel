@@ -46,6 +46,7 @@ stack_snapshot(
         "HList-0.5.2.0",
         "aeson",
         "attoparsec",
+        "base64-bytestring",
         "bytestring",
         "byteunits-0.4.0.3",
         "containers",
