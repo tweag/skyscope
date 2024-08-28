@@ -2,6 +2,7 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 
 module Main where
@@ -12,18 +13,23 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, tryJust)
 import Control.Monad (guard, when)
 import Data.Aeson (decode, encode)
+import qualified Data.ByteString.Char8 as BSC
+import Data.FileEmbed (embedFileIfExists)
 import Data.Foldable (asum, for_, traverse_)
 import Data.Functor (void, (<&>))
 import Data.List (isPrefixOf, stripPrefix)
+import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, isNothing)
 import qualified Data.Text as Text
 import Data.UUID (UUID)
 import qualified Import
+import qualified Language.Haskell.TH as TH
 import Network.HTTP.Client (Request (..), RequestBody (..), defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Types (Status (..))
 import qualified Server
 import System.Directory (createDirectoryIfMissing)
 import System.Environment (getArgs, setEnv)
+import System.FilePath.Find (filePath, find, (~~?))
 import System.FilePath.Posix (takeBaseName)
 import System.IO (stdin)
 import System.IO.Error (isDoesNotExistError)
@@ -43,7 +49,28 @@ main = do
     ["server"] -> pure ()
     "import" : args -> importWorkspace args
     "import-graphviz" : args -> importGraphviz args
+    ["--version"] -> putStrLn version
     _ -> usageError
+
+version :: String
+version = do
+  let stableStatus =
+        BSC.unpack $
+          fromMaybe "" $
+            $( embedFileIfExists
+                 $( do
+                      found <- TH.runIO $ find (pure True) (filePath ~~? "**/stable-status.txt") "."
+                      pure $
+                        TH.LitE $
+                          TH.StringL $ case found of
+                            [path] -> path
+                            [] -> ""
+                            _ -> error "unexpectedly found multiple Version.hs files"
+                  )
+             )
+      fields = Map.fromList $ words <$> lines stableStatus <&> \[k, v] -> (k, v)
+      lookupField k = fromMaybe "(unknown)" $ Map.lookup k fields
+  lookupField "STABLE_VERSION" <> " (built from " <> lookupField "STABLE_GIT_COMMIT" <> ")"
 
 restartServer :: IO ()
 restartServer = do
