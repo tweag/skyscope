@@ -1,4 +1,5 @@
 load("@rules_haskell//haskell:defs.bzl", "haskell_binary", "haskell_toolchain_library")
+load("//release:version.bzl", "copy_stable_status")
 
 constraint_setting(
     name = "executable_linking",
@@ -31,6 +32,11 @@ platform(
     visibility = ["//visibility:public"],
 )
 
+copy_stable_status(
+    name = "stable_status",
+    output = "stable-status.txt",
+)
+
 haskell_toolchain_library(name = "base")
 
 haskell_binary(
@@ -47,6 +53,7 @@ haskell_binary(
         ":src/Sqlite.hs",
     ],
     extra_srcs = [
+        ":stable_status",
         "//frontend:main.js",
         "//frontend:src/index.js",
         "//frontend:src/format.js",

@@ -16,4 +16,6 @@ run --host_platform=//backend:regular_executable --incompatible_enable_cc_toolch
 # We also need to setup an utf8 locale
 test --test_env=LANG=en_US.utf8 --test_env=LOCALE_ARCHIVE
 
+build --workspace_status_command "bash release/version.sh"
+
 try-import .bazelrc.local
